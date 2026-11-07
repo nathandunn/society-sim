@@ -1,0 +1,12 @@
+{
+  "name": "society-sim",
+  "version": "0.1.0",
+  "description": "Pits social organisation strategies against each other over 500 years on a forager island",
+  "type": "module",
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "test": "node tools/test.mjs",
+    "sim": "node tools/run.mjs"
+  },
+  "license": "MIT"
+}

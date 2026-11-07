@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Society Sim</title>
+<meta name="description" content="Pit social organisation strategies against each other for 500 years on a forager island.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='11' cy='16' r='7' fill='%23c2410c'/><circle cx='21' cy='16' r='7' fill='%231d4ed8' fill-opacity='.85'/></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>Society Sim</h1>
+    <p class="sub">Two forager bands, one rich-forest island, 500 years. Which way of organising people survives — and why.</p>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button class="tab on" data-tab="run" role="tab">Single run</button>
+    <button class="tab" data-tab="sweep" role="tab">Sweep</button>
+    <button class="tab" data-tab="about" role="tab">Model</button>
+  </nav>
+</header>
+
+<main>
+  <section id="setup" class="panel">
+    <div class="socs" id="socs"></div>
+    <div class="runbar">
+      <label>Seed <input id="seed" type="number" value="1" min="1"></label>
+      <label>Years <input id="years" type="number" value="500" min="20" max="2000" step="10"></label>
+      <label>Environment <select id="env"><option value="forest">Rich forest</option><option disabled>Desert nomadic (v2)</option></select></label>
+      <label class="chk"><input id="freeze" type="checkbox"> Freeze genomes</label>
+      <button id="go" class="primary">Run 500 years</button>
+      <button id="dice" title="New random seed">New seed</button>
+    </div>
+  </section>
+
+  <section id="tab-run">
+    <div id="runstatus" class="status">Pick two societies and press Run.</div>
+    <div id="outcome" class="cards"></div>
+    <div id="charts" class="grid"></div>
+    <div class="two">
+      <section class="panel">
+        <h2>What happened</h2>
+        <p class="hint">Big swings and turning points, with their causes. Click a line to jump to that year.</p>
+        <ol id="digest" class="digest"></ol>
+      </section>
+      <section class="panel">
+        <h2>Event log <span id="logtitle" class="muted"></span></h2>
+        <div class="filters">
+          <select id="fSoc"></select>
+          <select id="fType"></select>
+          <select id="fCause"></select>
+          <label>Year <input id="fYear" type="number" min="0" style="width:5.5em"></label>
+          <label>± <input id="fWin" type="number" value="0" min="0" style="width:3.5em"></label>
+          <button id="fClear">Clear</button>
+        </div>
+        <div id="log" class="log"></div>
+      </section>
+    </div>
+    <section class="panel">
+      <h2>Culture over time</h2>
+      <p class="hint">Every rule change, with how it happened: drift, imitation of a more successful neighbour, fission, or the threat-driven rise and peace-driven decay of ritual.</p>
+      <div id="genes" class="tablewrap"></div>
+    </section>
+    <div class="exports"><button id="expJson">Export run (JSON)</button><button id="expCsv">Export event log (CSV)</button></div>
+  </section>
+
+  <section id="tab-sweep" hidden>
+    <section class="panel">
+      <h2>Sweep</h2>
+      <p class="hint">Round robin of the societies you tick, plus the two custom ones above. Each pair runs N seeds; survival counts a founder as alive if it or any daughter band is alive at the end.</p>
+      <div id="sweepPick" class="pickgrid"></div>
+      <div class="runbar">
+        <label>Seeds per pair <input id="sSeeds" type="number" value="20" min="2" max="500"></label>
+        <label>Years <input id="sYears" type="number" value="500" min="20" max="2000" step="10"></label>
+        <button id="sGo" class="primary">Run sweep</button>
+        <span id="sStatus" class="muted"></span>
+      </div>
+      <div class="bar"><div id="sBar"></div></div>
+    </section>
+    <section class="panel"><h2>Ranking</h2><div id="sRank" class="tablewrap"></div></section>
+    <section class="panel"><h2>Pairings</h2><div id="sTable" class="tablewrap"></div></section>
+  </section>
+
+  <section id="tab-about" hidden class="panel prose">
+    <h2>The model</h2>
+    <p>Every person is an agent with a mother, a father, skills and a cause of death. One tick is one year. Each society carries a <b>genome</b> of rules — marriage, mate choice, descent, residence, labour, sharing, foraging, trade, governance, norm enforcement, outgroup stance, captives, famine policy, fission size and ritual — and the rules change only what they mechanically change.</p>
+    <h3>Each year</h3>
+    <ol>
+      <li><b>Climate and shocks.</b> A good, normal or bad year; rare forest fires, storms and epidemics.</li>
+      <li><b>Forage.</b> Workers pick plant, game or fish patches within range of camp by expected return. Hunting is high-variance. Patches deplete and regrow logistically, so carrying capacity emerges rather than being set. Camps move toward richer ground.</li>
+      <li><b>Share.</b> Food flows by the sharing gene (household, lineage, camp, or ruler with an elite cut), with some demand-sharing between groups. Pooling invites free-riding unless norms are enforced.</li>
+      <li><b>Live and die.</b> Forager-calibrated hazards (≈18% infant mortality, ≈60% reach 15) for infant illness, infection, accident, other illness and old age, amplified by hunger and reduced by medicine. Fathers, grandmothers and residence rules change child survival.</li>
+      <li><b>Pair and give birth.</b> Marriage rules, incest avoidance, polygyny by status, intermarriage across societies, birth spacing, maternal death, famine infanticide.</li>
+      <li><b>Conflict.</b> Raids decided by governance from hunger, grievance, unpaired men, relative strength and the leader's temperament. Captives are killed, ransomed, enslaved or adopted. A crushing win can conquer a weakened rival.</li>
+      <li><b>Trade.</b> Peaceful neighbours trade: a yield bonus, famine relief, technology diffusion — and disease.</li>
+      <li><b>Know-how.</b> Skill is per person and taught to children; a society's level is its best few practitioners. Fifteen technologies (including six medicines) are invented, diffused and lost when experts die.</li>
+      <li><b>Culture evolves.</b> Rare drift, imitation of a visibly more successful neighbour, conquest, and fission into daughter bands with a mutated genome.</li>
+    </ol>
+    <h3>Sources the mechanics lean on</h3>
+    <ul>
+      <li>Read (2003), multi-agent !Kung demography — birth spacing and marriage rules set population.</li>
+      <li>JASSS (2017), minimum viable hunter-gatherer populations — restrictive marriage hurts small groups.</li>
+      <li>SFI working paper 2017-12-037, the polygyny puzzle; Francesconi, Ghiglino &amp; Perry, an evolutionary theory of monogamy.</li>
+      <li>Turchin &amp; Gavrilets; Turchin et al. (2013) — war as cultural multilevel selection.</li>
+      <li>Epstein &amp; Axtell, Sugarscape; Janssen (2009), Artificial Anasazi — carrying capacity dominates.</li>
+      <li>Gurven &amp; Kaplan (2007) life tables (approximate baselines; every parameter is in <code>src/params.js</code>).</li>
+    </ul>
+    <p class="muted">Source: <a href="https://github.com/nathandunn/society-sim">github.com/nathandunn/society-sim</a></p>
+  </section>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>
