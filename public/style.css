@@ -8,20 +8,25 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #14130f; --panel: #1c1b17; --ink: #ece8df; --muted: #a39d91; --line: #34312a; --grid: #2a2823;
-    --accent: #f59e0b; --accent-ink: #1a1306; --chip: #2a2822;
+    --accent: #f59e0b; --accent-ink: #1a1306; --chip: #2a2822; color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+  --bg: #14130f; --panel: #1c1b17; --ink: #ece8df; --muted: #a39d91; --line: #34312a; --grid: #2a2823;
+  --accent: #f59e0b; --accent-ink: #1a1306; --chip: #2a2822; color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 var(--sans); }
 a { color: inherit; }
-header.top { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; justify-content: space-between; padding: 20px 16px 10px; max-width: 1240px; margin: 0 auto; }
+header.top { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; justify-content: space-between; padding-block: 20px 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); max-width: 1240px; margin: 0 auto; }
 h1 { font-family: var(--serif); font-weight: 600; font-size: 30px; margin: 0; letter-spacing: -0.01em; }
 h2 { font-family: var(--serif); font-weight: 600; font-size: 19px; margin: 0 0 8px; }
 h3 { font-size: 15px; margin: 16px 0 6px; }
 .sub { margin: 4px 0 0; color: var(--muted); max-width: 60ch; }
 .muted, .hint { color: var(--muted); }
 .hint { margin: -2px 0 10px; font-size: 13.5px; }
-main { max-width: 1240px; margin: 0 auto; padding: 0 16px 40px; }
+main { max-width: 1240px; margin: 0 auto; padding-block: 0 40px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.two > *, .grid > *, .cards > * { min-width: 0; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin: 12px 0; }
 .tabs { display: flex; gap: 4px; background: var(--chip); padding: 3px; border-radius: 9px; }
 .tab { border: 0; background: transparent; padding: 7px 12px; border-radius: 7px; font: inherit; color: var(--muted); cursor: pointer; }

@@ -258,8 +258,8 @@ function renderGenes() {
 
 // ---------- export ----------
 function download(name, text, type) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }
-$('#expJson').onclick = () => result && download(`society-sim-seed${result.seed}.json`, JSON.stringify({ config: socs, ...result }), 'application/json');
-$('#expCsv').onclick = () => {
+if ($('#expJson')) $('#expJson').onclick = () => result && download(`society-sim-seed${result.seed}.json`, JSON.stringify({ config: socs, ...result }), 'application/json');
+if ($('#expCsv')) $('#expCsv').onclick = () => {
   if (!result) return;
   const cols = ['y', 't', 'soc', 'to', 'who', 'sex', 'age', 'cause', 'f', 'gene', 'from', 'tech', 'via', 'win', 'dA', 'dB', 'taken'];
   const cell = v => v == null ? '' : '"' + String(Array.isArray(v) ? v.join('; ') : v).replace(/"/g, '""') + '"';
