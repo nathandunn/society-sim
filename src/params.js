@@ -3,7 +3,7 @@
 // TFR ~ 5-6, modal adult death ~ 70. Every value is tunable from the UI.
 
 // Model version: bump with package.json (tests check they match). Stamped into every result.
-export const MODEL_VERSION = '0.2.0';
+export const MODEL_VERSION = '0.3.0';
 
 export const DEFAULT_PARAMS = {
   years: 500,
@@ -20,7 +20,9 @@ export const DEFAULT_PARAMS = {
   conceptionBase: 0.42,     // per eligible year (not nursing)
   nursingYears: 2,
   maternalDeath: 0.012,     // per birth, without midwifery
-  starvationHazard: 0.3,    // added hazard = k * deficit^2 (hunger also amplifies illness, see engine)
+  starvationHazard: 0.9,    // added hazard = k * severity^2 once hunger passes the famine line
+  famineLine: 0.4,          // below this deficit hunger kills through illness, not outright starvation
+  hungerIllness: 5,         // illness hazard multiplier at total hunger (1 + k * deficit)
   sexRatioMale: 0.51,
 
   // --- Food (kcal per year) ---
@@ -52,8 +54,17 @@ export const DEFAULT_PARAMS = {
   K: { plant: 4000000, game: 3200000, fish: 3400000 },  // per patch (fish only coastal)
   regrow: { plant: 0.55, game: 0.35, fish: 0.45 },
   climate: { bad: 0.15, badMult: 0.68, good: 0.15, goodMult: 1.15, noise: 0.08 },
-  shocks: { fire: 0.02, storm: 0.02, epidemic: 0.012 },
-  epidemicKill: 0.07,
+  shocks: { fire: 0.02, storm: 0.02, epidemic: 0.012 },  // epidemic = yearly chance per ~100 people of a spillover from wild animals
+  // Contagious disease (strains with immunity). Small bands cannot keep crowd diseases going,
+  // so outbreaks burn out and return only by new spillover or by contact with other peoples.
+  disease: {
+    spillHerd: 0.006,       // spillover chance per 100 livestock units per year
+    spillCrowd: 0.03,       // extra spillover chance per year for a fully farming village, per 200 people
+    reuse: 0.6,             // chance a spillover is an already-known strain from the same source
+    viaTrade: 0.3, viaRaid: 0.5, viaMigrants: 0.25,   // chance per year a live outbreak crosses each channel
+    crowding: 0.35,         // R0 boost for settled villages
+    hungerCFR: 2,           // case fatality multiplier at total hunger (1 + k * deficit)
+  },
 
   // --- Social ---
   freeRiderLoss: 0.18,      // max effort lost under pooled sharing
@@ -116,3 +127,66 @@ export const CAUSES = [
   'childbirth', 'epidemic', 'raid', 'mate fight', 'punishment', 'infanticide', 'succession',
   'revolt', 'killed captive',
 ];
+
+// Parameters the app lets you tune. path = dotted key into the params object;
+// scale divides the stored value for display (e.g. kcal -> millions of kcal).
+export const PARAM_UI = [
+  { group: 'People', path: 'conceptionBase', label: 'Conception chance per year', min: 0.1, max: 0.8, step: 0.01 },
+  { group: 'People', path: 'nursingYears', label: 'Birth spacing, mobile (years nursing)', min: 1, max: 4, step: 1 },
+  { group: 'People', path: 'nursingYearsSedentary', label: 'Birth spacing, villages (years)', min: 1, max: 4, step: 1 },
+  { group: 'People', path: 'maternalDeath', label: 'Deaths per birth, mothers', min: 0, max: 0.05, step: 0.001 },
+  { group: 'People', path: 'infantA', label: 'Infant illness hazard', min: 0.05, max: 0.4, step: 0.01 },
+  { group: 'People', path: 'bgInfection', label: 'Everyday infection hazard', min: 0, max: 0.02, step: 0.0005 },
+  { group: 'Food', path: 'adultNeed', label: 'Adult need', unit: 'M kcal/yr', scale: 1e6, min: 0.6, max: 1.2, step: 0.01 },
+  { group: 'Food', path: 'rate.plant', label: 'Gathering return per worker', unit: 'M kcal/yr', scale: 1e6, min: 0.5, max: 6, step: 0.1 },
+  { group: 'Food', path: 'rate.game', label: 'Hunting return per worker', unit: 'M kcal/yr', scale: 1e6, min: 0.5, max: 6, step: 0.1 },
+  { group: 'Food', path: 'rate.fish', label: 'Fishing return per worker', unit: 'M kcal/yr', scale: 1e6, min: 0.5, max: 6, step: 0.1 },
+  { group: 'Food', path: 'rate.farm', label: 'Farming return per worker', unit: 'M kcal/yr', scale: 1e6, min: 0.5, max: 10, step: 0.1 },
+  { group: 'Food', path: 'herdYield', label: 'Yield per livestock unit', unit: 'k kcal/yr', scale: 1e3, min: 20, max: 400, step: 5 },
+  { group: 'Food', path: 'gameVariance', label: 'Hunting luck (variance)', min: 0, max: 1.2, step: 0.05 },
+  { group: 'Food', path: 'storeDecay', label: 'Stores lost per year (no preserving)', min: 0, max: 1, step: 0.05 },
+  { group: 'Land', path: 'K.plant', label: 'Plant food per patch', unit: 'M kcal', scale: 1e6, min: 0.5, max: 10, step: 0.1 },
+  { group: 'Land', path: 'K.game', label: 'Game per patch', unit: 'M kcal', scale: 1e6, min: 0.5, max: 10, step: 0.1 },
+  { group: 'Land', path: 'K.fish', label: 'Fish per shore patch', unit: 'M kcal', scale: 1e6, min: 0, max: 10, step: 0.1 },
+  { group: 'Land', path: 'fieldDepletion', label: 'Soil tiredness per farmer-year', min: 0, max: 0.03, step: 0.001 },
+  { group: 'Land', path: 'fieldRecovery', label: 'Fallow recovery per year', min: 0, max: 0.5, step: 0.01 },
+  { group: 'Land', path: 'herdGrowth', label: 'Herd growth per year', min: 0, max: 0.4, step: 0.01 },
+  { group: 'Climate', path: 'climate.bad', label: 'Chance of a bad year', min: 0, max: 0.6, step: 0.01 },
+  { group: 'Climate', path: 'climate.badMult', label: 'Harvest in a bad year (× normal)', min: 0.2, max: 1, step: 0.01 },
+  { group: 'Climate', path: 'climate.good', label: 'Chance of a good year', min: 0, max: 0.6, step: 0.01 },
+  { group: 'Climate', path: 'shocks.fire', label: 'Forest fires per year', min: 0, max: 0.1, step: 0.005 },
+  { group: 'Climate', path: 'shocks.storm', label: 'Storms per year', min: 0, max: 0.1, step: 0.005 },
+  { group: 'Disease', path: 'shocks.epidemic', label: 'Spillover from wild animals (per 100 people per year)', min: 0, max: 0.1, step: 0.002 },
+  { group: 'Disease', path: 'disease.spillHerd', label: 'Spillover from herds (per 100 livestock)', min: 0, max: 0.05, step: 0.001 },
+  { group: 'Disease', path: 'disease.spillCrowd', label: 'Diseases bred in villages', min: 0, max: 0.2, step: 0.005 },
+  { group: 'Disease', path: 'disease.viaTrade', label: 'Spread through trade', min: 0, max: 1, step: 0.05 },
+  { group: 'Disease', path: 'disease.viaRaid', label: 'Spread through raids', min: 0, max: 1, step: 0.05 },
+  { group: 'Disease', path: 'hungerIllness', label: 'How much hunger worsens illness', min: 0, max: 10, step: 0.5 },
+  { group: 'Disease', path: 'famineLine', label: 'Famine line (share of food missing)', min: 0.1, max: 0.9, step: 0.05 },
+  { group: 'Conflict', path: 'raidBase', label: 'Raid chance when pressed', min: 0, max: 1, step: 0.01 },
+  { group: 'Conflict', path: 'raidThreshold', label: 'Pressure needed to raid', min: 0, max: 3, step: 0.05 },
+  { group: 'Conflict', path: 'casualtyLoser', label: 'Deaths among the losing side', min: 0, max: 0.8, step: 0.01 },
+  { group: 'Conflict', path: 'casualtyWinner', label: 'Deaths among the winning side', min: 0, max: 0.5, step: 0.01 },
+  { group: 'Conflict', path: 'unpairedViolence', label: 'Fights among unpaired men', min: 0, max: 0.1, step: 0.002 },
+  { group: 'Culture', path: 'inventBase', label: 'Invention rate', min: 0, max: 0.03, step: 0.0005 },
+  { group: 'Culture', path: 'driftRate', label: 'Rule drift per gene per year', min: 0, max: 0.02, step: 0.0005 },
+  { group: 'Culture', path: 'imitateRate', label: 'Imitating a richer neighbour', min: 0, max: 0.2, step: 0.005 },
+  { group: 'Culture', path: 'ritualDecay', label: 'Ritual decay in peace', min: 0, max: 0.02, step: 0.0005 },
+];
+
+export const getPath = (o, path) => path.split('.').reduce((x, k) => (x == null ? undefined : x[k]), o);
+
+// Turn {path: value} tuning into a nested params object, dropping anything unknown or out of range.
+export function tuningToParams(tune) {
+  const out = {};
+  for (const spec of PARAM_UI) {
+    const v = tune && tune[spec.path];
+    if (typeof v !== 'number' || !Number.isFinite(v)) continue;
+    const real = v * (spec.scale || 1);
+    const lo = spec.min * (spec.scale || 1), hi = spec.max * (spec.scale || 1);
+    const keys = spec.path.split('.');
+    let o = out; for (const k of keys.slice(0, -1)) o = o[k] = o[k] || {};
+    o[keys.at(-1)] = Math.min(hi, Math.max(lo, real));
+  }
+  return out;
+}

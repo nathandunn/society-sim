@@ -1,0 +1,18 @@
+# Deployed by /opt/scripts/deploy.sh on the hub. One container serves the app and runs sweeps;
+# finished sweeps are kept on the society-sim-data volume.
+services:
+  web:
+    build: .
+    container_name: society-sim
+    restart: unless-stopped
+    environment:
+      - SWEEP_WORKERS=2
+    volumes:
+      - society-sim-data:/data
+    networks:
+      - web
+networks:
+  web:
+    external: true
+volumes:
+  society-sim-data:

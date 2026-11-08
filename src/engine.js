@@ -42,7 +42,7 @@ export function runSim(cfg) {
   // ---------- World ----------
   const envKey = ENVIRONMENTS[P.env] ? P.env : 'forest';
   const W = buildWorld(envKey, P, R);
-  P = deepMerge(P, W.params || {});
+  P = deepMerge(deepMerge(DEFAULT_PARAMS, W.params || {}), cfg.params || {}); // defaults < world < user tuning
   const G = W.G;
   const patches = W.patches;
   patches.forEach(pt => { pt.fertNow = pt.fert; pt.lastFarmed = -99; pt.farmers = 0; });
@@ -68,7 +68,7 @@ export function runSim(cfg) {
       skill: o.skill || Object.fromEntries(DOMAINS.map(d => [d, 0.05])),
       coop: clamp(o.coop ?? 0.5, 0, 1), aggr: clamp(o.aggr ?? 0.5, 0, 1), flair: R(),
       lastBirth: -99, kids: [], matriline: o.matriline || 0, patriline: o.patriline || 0,
-      ancestry: o.ancestry || new Array(nFounders).fill(0), freedYear: o.freedYear ?? null,
+      ancestry: o.ancestry || new Array(nFounders).fill(0), freedYear: o.freedYear ?? null, imm: null,
       foodRatio: 1, activity: null, raided: false, origin: o.soc, wealth: 0, wealthRank: 0,
     };
     if (!p.matriline) p.matriline = p.id;
@@ -86,7 +86,7 @@ export function runSim(cfg) {
       id: societies.length, name, color: parent !== null ? societies[parent].color : COLORS[societies.length % COLORS.length], genome: cloneGenome(genome),
       home, alive: true, techs: new Set(), stores: new Map(), grievance: {}, trust: {}, tradeLink: {},
       leader: 0, cohesionPenalty: 0, lastRaidYear: -99, lastPressure: {}, parent, founded: 0, ended: null,
-      endReason: null, popHistory: [], epidemicThisYear: false, foodRatio: 1, tradeBonus: 0,
+      endReason: null, popHistory: [], epidemicThisYear: false, foodRatio: 1, tradeBonus: 0, pendingStrains: [], outbreakStrain: null,
       ritualLogged: genome.ritual, herds: new Map(), prod: {}, farmShare: 0, herdShare: 0, sedentary: false, graze: 1, tribute: 0,
     };
     societies.push(s);
@@ -188,6 +188,70 @@ export function runSim(cfg) {
     return 'i' + headOf(p, g).id;
   }
   const canUse = (p, s, key) => key === 'all' || key === 'ruler' || key === ownerKey(p, s);
+  // ---------- Contagious disease ----------
+  const strains = [];
+  const KINDS = {
+    respiratory: { R0: [2, 4.5], cfr: [0.03, 0.1], names: ['cough', 'chest fever', 'wheeze', 'throat sickness'] },
+    gut: { R0: [1.5, 3], cfr: [0.04, 0.14], names: ['flux', 'bloody flux', 'gut fever', 'wasting sickness'] },
+    fever: { R0: [1.2, 2.5], cfr: [0.05, 0.18], names: ['fever', 'shaking fever', 'sweating sickness', 'yellow fever'] },
+    pox: { R0: [3, 6], cfr: [0.1, 0.3], names: ['pox', 'spotted sickness', 'blister fever', 'red pox'] },
+  };
+  const COLOURS = ['red', 'grey', 'black', 'white', 'spotted', 'summer', 'winter', 'river', 'marsh', 'hill'];
+  const SOURCE_KINDS = { wild: ['fever', 'gut', 'respiratory'], herd: ['pox', 'respiratory', 'gut', 'fever'], crowd: ['gut', 'respiratory', 'pox'] };
+  function newStrain(source, y) {
+    const kinds = SOURCE_KINDS[source];
+    const kind = kinds[Math.floor(R() * kinds.length)], K = KINDS[kind];
+    const between = ([a, b]) => a + R() * (b - a);
+    let name;
+    for (let k = 0; k < 6; k++) {
+      name = (source === 'herd' && R() < 0.5 ? 'cattle' : COLOURS[Math.floor(R() * COLOURS.length)]) + ' ' + K.names[Math.floor(R() * K.names.length)];
+      if (!strains.some(z => z.name === name)) break;
+      name += ' ' + roman(strains.length + 1);
+    }
+    const st = { id: strains.length, name, kind, source, R0: +between(K.R0).toFixed(2), cfr: +between(K.cfr).toFixed(3), born: y };
+    strains.push(st);
+    return st;
+  }
+  function spillover(source, y) {
+    const known = strains.filter(z => z.source === source);
+    return known.length && R() < P.disease.reuse ? known[Math.floor(R() * known.length)] : newStrain(source, y);
+  }
+  // final size of an outbreak: fraction z of susceptibles infected, z = 1 - exp(-R * s0 * z)
+  function finalSize(R, s0) {
+    if (R * s0 <= 1) return 0;
+    let z = 0.9;
+    for (let k = 0; k < 40; k++) z = 1 - Math.exp(-R * s0 * z);
+    return z;
+  }
+  function outbreak(s, st, y, via) {
+    const ms = members(s);
+    if (!ms.length) return;
+    const sus = ms.filter(p => !(p.imm && p.imm.has(st.id)));
+    const s0 = sus.length / ms.length;
+    let Reff = st.R0 * (s.sedentary ? 1 + P.disease.crowding : 1) * (has(s, 'quarantine') ? 0.6 : 1) * (st.kind === 'gut' && has(s, 'hygiene') ? 0.7 : 1);
+    Reff *= Math.min(1, Math.sqrt(ms.length / 40)); // tiny groups have fewer chains of contact
+    const z = finalSize(Reff, s0);
+    let infected = 0, n = 0;
+    const casesIfFizzle = 1 + Math.floor(R() * 3);
+    sus.forEach((p, i) => {
+      const hit = z > 0 ? R() < z : i < casesIfFizzle && R() < 0.8;
+      if (!hit) return;
+      infected++;
+      const a = age(p, y), deficit = Math.max(0, 1 - p.foodRatio);
+      const cfr = Math.min(0.7, st.cfr * (a < 5 ? 2 : a < 15 ? 0.6 : a >= 60 ? 2.5 : 1) * (1 + P.disease.hungerCFR * deficit) *
+        (has(s, 'herbal') ? 0.85 : 1) * (p.status === 'slave' ? 1.2 : 1));
+      if (R() < cfr) {
+        const f = [st.name, via];
+        if (deficit > 0.15) f.push('hungry');
+        if (s0 > 0.9) f.push('no one immune');
+        kill(p, y, 'epidemic', f, { strain: st.id });
+        n++;
+      } else (p.imm || (p.imm = new Set())).add(st.id);
+    });
+    s.epidemicThisYear = true;
+    (s.outbreaks || (s.outbreaks = [])).push(st.id);
+    log({ y, t: 'epidemic', soc: s.id, strain: st.id, name: st.name, kind: st.kind, via, R: +Reff.toFixed(2), susceptible: +s0.toFixed(2), infected, deaths: n });
+  }
   function needOf(p, y) {
     const a = age(p, y);
     if (a < 12) return P.adultNeed * P.childNeedFrac * (a < 3 ? 0.6 : 1);
@@ -681,7 +745,7 @@ export function runSim(cfg) {
           if (a === 0 && !has(s, 'midwifery')) f.push('no midwife');
         }
         const slaveM = p.status === 'slave' ? 1.25 : 1;
-        const hungerM = 1 + 2.5 * Math.max(0, 1 - p.foodRatio); // malnutrition-infection synergy
+        const hungerM = 1 + P.hungerIllness * Math.max(0, 1 - p.foodRatio); // malnutrition-infection synergy: most hunger deaths are illness deaths
         hInf *= hungerM;
         const hInfect = P.bgInfection * (has(s, 'herbal') ? 0.6 : 1) * (has(s, 'hygiene') ? 0.8 : 1) * slaveM * hungerM * (1 + 0.4 * s.farmShare + 0.3 * s.herdShare);
         const hunter = p.activity === 'hunt';
@@ -689,8 +753,9 @@ export function runSim(cfg) {
         const hOther = P.bgOther * slaveM * hungerM;
         const hOld = P.senA * Math.exp(P.senB * a);
         const deficit = 1 - p.foodRatio;
-        const hStarve = deficit > 0 ? P.starvationHazard * deficit * deficit * (a < 5 || a > 60 ? 1.5 : 1) : 0;
-        if (deficit > 0.15) f.push('hungry');
+        const sev = Math.max(0, deficit - P.famineLine) / (1 - P.famineLine); // outright starvation only in true famine
+        const hStarve = sev > 0 ? P.starvationHazard * sev * sev * (a < 5 || a > 60 ? 1.5 : 1) : 0;
+        if (deficit > 0.15) f.push(deficit > P.famineLine ? 'famine' : 'malnourished');
         if (climateTag === 'bad') f.push('bad year');
         if (storesEmpty && deficit > 0) f.push('stores empty');
         if (p.status === 'slave') f.push('enslaved');
@@ -704,19 +769,16 @@ export function runSim(cfg) {
           kill(p, y, cause, f);
         }
       }
-      // epidemics
-      const epiP = P.shocks.epidemic * Math.sqrt(Math.max(1, ms.length) / 100) * (1 + 1.5 * s.farmShare) + (s.importedDisease ? 0.35 * (has(s, 'quarantine') ? 0.5 : 1) : 0);
-      s.importedDisease = false;
-      if (R() < epiP) {
-        s.epidemicThisYear = true;
-        let n = 0;
-        members(s).forEach(p => {
-          const a = age(p, y);
-          const k = P.epidemicKill * (a < 5 || a > 60 ? 2 : 1) * (has(s, 'quarantine') ? 0.5 : 1) * (has(s, 'herbal') ? 0.85 : 1) * (p.foodRatio < 0.8 ? 1.3 : 1);
-          if (R() < k) { kill(p, y, 'epidemic', p.foodRatio < 0.8 ? ['hungry'] : []); n++; }
-        });
-        log({ y, t: 'epidemic', soc: s.id, deaths: n });
-      }
+      // contagious disease: strains caught from neighbours last year, then new spillovers
+      s.outbreaks = [];
+      const pend = s.pendingStrains; s.pendingStrains = [];
+      const seen = new Set();
+      for (const { strain, via } of pend) { if (seen.has(strain)) continue; seen.add(strain); outbreak(s, strains[strain], y, via); }
+      const pop100 = Math.max(1, ms.length) / 100;
+      const herdUnits = [...s.herds.values()].reduce((a, b) => a + b, 0);
+      if (R() < P.shocks.epidemic * Math.sqrt(pop100)) { const st = spillover('wild', y); if (!seen.has(st.id)) { seen.add(st.id); outbreak(s, st, y, 'caught from wild animals'); } }
+      if (herdUnits > 1 && R() < P.disease.spillHerd * herdUnits / 100) { const st = spillover('herd', y); if (!seen.has(st.id)) { seen.add(st.id); outbreak(s, st, y, 'caught from the herds'); } }
+      if (s.sedentary && R() < P.disease.spillCrowd * s.farmShare * ms.length / 200) { const st = spillover('crowd', y); if (!seen.has(st.id)) { seen.add(st.id); outbreak(s, st, y, 'bred in crowded villages'); } }
     }
 
     // --- internal violence, enforcement, slaves ---
@@ -879,7 +941,7 @@ export function runSim(cfg) {
 
     // --- conflict ---
     const liveNow = societies.filter(s => s.alive && members(s).length);
-    const raidedThisYear = new Set();
+    const raidedThisYear = new Set(), raidedPairs = new Set();
     for (const A of liveNow) {
       for (const B of liveNow) {
         if (A === B || !A.alive || !B.alive || !canRaid(A, B)) continue;
@@ -953,7 +1015,7 @@ export function runSim(cfg) {
         const sdA = ensureSeries(A), sdB = ensureSeries(B);
         sdA.raidsMade[y] = (sdA.raidsMade[y] || 0) + 1; sdB.raidsSuffered[y] = (sdB.raidsSuffered[y] || 0) + 1;
         sdA.warDeaths[y] = (sdA.warDeaths[y] || 0) + dA; sdB.warDeaths[y] = (sdB.warDeaths[y] || 0) + dB;
-        raidedThisYear.add(A.id); raidedThisYear.add(B.id);
+        raidedThisYear.add(A.id); raidedThisYear.add(B.id); raidedPairs.add(A.id + '-' + B.id);
         log({ y, t: 'raid', soc: A.id, to: B.id, win, party: party.length, def: defenders.length, dA, dB, taken, stolen: Math.round(stolen), herds: rustledThis,
           f: [A.meanRatio < 0.85 ? 'hunger' : null, (A.grievance[B.id] || 0) > 1 ? 'grievance' : null, (A.unpairedFrac || 0) > 0.25 ? 'unpaired men' : null].filter(Boolean) });
         // conquest
@@ -990,7 +1052,21 @@ export function runSim(cfg) {
         for (const t of Y.techs) if (!X.techs.has(t) && reqOf(t).every(r => X.techs.has(r)) && R() < P.diffuseTrade * link) {
           X.techs.add(t); log({ y, t: 'tech', soc: X.id, tech: t, via: 'trade with ' + Y.name });
         }
-        if (Y.epidemicThisYear && R() < 0.3 * (has(X, 'quarantine') ? 0.5 : 1)) X.importedDisease = true;
+      }
+    }
+    // outbreaks cross to peoples in contact: trade, raids, and people who moved between them
+    for (const X of societies.filter(z => z.alive && z.outbreaks && z.outbreaks.length)) {
+      for (const Y of societies.filter(z => z.alive && z !== X && inContact(X, z))) {
+        const raided = raidedPairs.has(X.id + '-' + Y.id) || raidedPairs.has(Y.id + '-' + X.id);
+        const movers = members(Y).filter(p => p.origin === X.id && curYear - p.born < 60).length;
+        const q = has(Y, 'quarantine') ? 0.5 : 1;
+        for (const sid of X.outbreaks) {
+          let via = null;
+          if ((X.tradeLink[Y.id] || 0) > 0 && R() < P.disease.viaTrade * q) via = 'from ' + X.name + ' through trade';
+          else if (raided && R() < P.disease.viaRaid) via = 'from ' + X.name + ' in a raid';
+          else if (movers && R() < Math.min(0.9, P.disease.viaMigrants * Math.sqrt(movers)) * q) via = 'from ' + X.name + ' through kin and captives';
+          if (via) Y.pendingStrains.push({ strain: sid, via });
+        }
       }
     }
     for (const s of liveNow) {
@@ -1221,7 +1297,7 @@ export function runSim(cfg) {
   });
   const digest = makeDigest(events, sseries, series, societies);
   return {
-    version: MODEL_VERSION, seed: cfg.seed, years: lastY + 1, params: P, env: envKey, envName: ENVIRONMENTS[envKey].name, grid: G,
+    strains, version: MODEL_VERSION, seed: cfg.seed, years: lastY + 1, params: P, env: envKey, envName: ENVIRONMENTS[envKey].name, grid: G,
     map: patches.map(pt => pt.land ? (pt.water ? 3 : pt.arable && pt.fert >= 1 ? 2 : pt.grass ? 4 : 1) : 0),
     societies: societies.map(s => ({ id: s.id, name: s.name, color: s.color, parent: s.parent, founded: s.founded })),
     series, sseries, events, summary, digest,

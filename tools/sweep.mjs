@@ -15,7 +15,7 @@ for (const env of envs) {
   }
   console.error(`${env} done ${((Date.now() - t0) / 1000).toFixed(0)}s`);
 }
-console.log('Mean share of the world at the end (survival), over all opponents and ' + seeds + ' seeds each\n');
+console.log('Survival to year ' + years + ' (mean share of the world), over all opponents and ' + seeds + ' seeds each\n');
 console.log('Society'.padEnd(26) + envs.map(e => ENVIRONMENTS[e].name.padStart(18)).join(''));
-for (const n of names) console.log(n.padEnd(26) + envs.map(e => { const c = M[n][e]; return `${pct(c.share / c.k)} (${pct(c.surv / c.k)})`.padStart(18); }).join(''));
+for (const n of names) console.log(n.padEnd(26) + envs.map(e => { const c = M[n][e]; return `${pct(c.surv / c.k)} (${pct(c.share / c.k)})`.padStart(18); }).join(''));
 console.log(`\nelapsed ${((Date.now() - t0) / 1000).toFixed(0)}s`);

@@ -1,5 +1,7 @@
 import { GENES, GENE_KEYS, PRESETS } from './src/genome.js';
-import { TECHS, DOMAINS } from './src/params.js';
+import { TECHS, DOMAINS, PARAM_UI, DEFAULT_PARAMS, getPath, tuningToParams } from './src/params.js';
+import { ENV_PARAMS } from './src/world.js';
+import { deepMerge } from './src/engine.js';
 import { ENVIRONMENTS } from './src/world.js';
 import { BUILD } from './version.js';
 import { lineChart, stackedBars } from './charts.js';
@@ -30,17 +32,45 @@ const socs = [
   { name: 'Patriarchal harem', preset: 'Patriarchal harem', genome: { ...PRESETS['Patriarchal harem'] } },
 ];
 let worker = null, result = null, pickYear = null, causeFilter = null, chartSoc = 'all';
+let tune = {};   // {param path: value in display units}
 
 function loadState() {
   try {
     const q = new URLSearchParams(location.hash.slice(1));
-    if (q.get('s')) { const st = JSON.parse(decodeURIComponent(atob(q.get('s')))); st.socs.forEach((s, i) => { socs[i] = s; if (!s.genome.property) s.genome.property = (PRESETS[s.preset] || {}).property || 'lineage'; }); $('#seed').value = st.seed; $('#years').value = st.years; if (st.env && ENVIRONMENTS[st.env]) $('#env').value = st.env; }
+    if (q.get('s')) { const st = JSON.parse(decodeURIComponent(atob(q.get('s')))); st.socs.forEach((s, i) => { socs[i] = s; if (!s.genome.property) s.genome.property = (PRESETS[s.preset] || {}).property || 'lineage'; }); $('#seed').value = st.seed; $('#years').value = st.years; if (st.env && ENVIRONMENTS[st.env]) $('#env').value = st.env; if (st.tune && typeof st.tune === 'object') tune = st.tune; }
   } catch { /* ignore a bad hash */ }
 }
 function saveState() {
-  const st = { socs, seed: +$('#seed').value, years: +$('#years').value, env: $('#env').value };
+  const st = { socs, seed: +$('#seed').value, years: +$('#years').value, env: $('#env').value, tune };
   try { history.replaceState(null, '', '#s=' + btoa(encodeURIComponent(JSON.stringify(st)))); } catch { }
 }
+
+// ---------- baseline tuning ----------
+const worldDefaults = () => deepMerge(DEFAULT_PARAMS, ENV_PARAMS[$('#env').value] || {});
+const decimals = step => (String(step).split('.')[1] || '').length;
+function renderTune() {
+  const D = worldDefaults();
+  const groups = [...new Set(PARAM_UI.map(p => p.group))];
+  $('#tuneBody').innerHTML = groups.map(g => `<fieldset><legend>${g}</legend>` + PARAM_UI.filter(p => p.group === g).map(p => {
+    const def = +(getPath(D, p.path) / (p.scale || 1)).toFixed(decimals(p.step));
+    const has = tune[p.path] !== undefined;
+    const id = 'tune-' + p.path.replace(/\./g, '-');
+    return `<label class="tunerow${has ? ' changed' : ''}" for="${id}"><span><b>${esc(p.label)}</b>${p.unit ? ` (${esc(p.unit)})` : ''}<small>default ${def}</small></span>
+      <input id="${id}" data-path="${p.path}" type="number" min="${p.min}" max="${p.max}" step="${p.step}" value="${has ? tune[p.path] : def}"></label>`;
+  }).join('') + '</fieldset>').join('');
+  $('#tuneBody').querySelectorAll('input').forEach(inp => inp.onchange = () => {
+    const spec = PARAM_UI.find(p => p.path === inp.dataset.path);
+    const def = +(getPath(worldDefaults(), spec.path) / (spec.scale || 1)).toFixed(decimals(spec.step));
+    let v = +inp.value;
+    if (!Number.isFinite(v)) v = def;
+    v = Math.min(spec.max, Math.max(spec.min, v));
+    if (Math.abs(v - def) < spec.step / 2) delete tune[spec.path]; else tune[spec.path] = v;
+    saveState(); renderTune();
+  });
+  const n = Object.keys(tune).length;
+  $('#tuneCount').textContent = n ? `· ${n} changed` : '· all defaults';
+}
+$('#tuneReset').onclick = () => { tune = {}; saveState(); renderTune(); };
 
 // ---------- setup ----------
 function renderSetup() {
@@ -103,7 +133,7 @@ function run() {
   saveState();
   $('#runstatus').textContent = 'Simulating…'; $('#go').disabled = true;
   getWorker().postMessage({ type: 'run', cfg: { genomes: socs.map(s => s.genome), names: socs.map(s => s.name), seed: +$('#seed').value || 1,
-    params: { years: +$('#years').value || 500, freezeGenomes: $('#freeze').checked, env: $('#env').value } } });
+    params: { ...tuningToParams(tune), years: +$('#years').value || 500, freezeGenomes: $('#freeze').checked, env: $('#env').value } } });
 }
 
 // ---------- results ----------
@@ -137,6 +167,7 @@ function renderResult() {
   renderFilters();
   renderLog();
   renderGenes();
+  renderDisease();
 }
 const pct = x => x == null ? '–' : Math.round(x * 100) + '%';
 const FOOD = { plant: ['Gathering', '#65a30d'], hunt: ['Hunting', '#b45309'], fish: ['Fishing', '#0284c7'], farm: ['Farming', '#ca8a04'], herd: ['Herding', '#9f1239'] };
@@ -268,7 +299,7 @@ function describe(e) {
     case 'gene': return `${n(e.soc)}: <b>${GENES[e.gene]?.label || e.gene}</b> ${esc(e.from)} → <b>${esc(e.to)}</b> <span class="f">(${esc(e.via)})</span>${f}`;
     case 'tech': return `${n(e.soc)}: gained <b>${TECHS[e.tech].name}</b> <span class="f">(${esc(e.via)})</span>`;
     case 'techLoss': return `${n(e.soc)}: <b>lost ${TECHS[e.tech].name}</b> — the experts are gone${f}`;
-    case 'epidemic': return `${n(e.soc)}: <b>epidemic</b>, ${e.deaths} dead`;
+    case 'epidemic': return `${n(e.soc)}: <b>${esc(e.name || 'epidemic')}</b> ${esc(e.via || '')} — ${e.infected ?? '?'} sick, <b>${e.deaths} dead</b> <span class="f">(${e.susceptible != null ? pct(e.susceptible) + ' had no immunity, ' : ''}spread rate ${e.R ?? '?'})</span>`;
     case 'shock': return `World: <b>${e.what}</b>`;
     case 'farming': return `${n(e.soc)}: <b>first fields cleared</b>`;
     case 'sedentary': return `${n(e.soc)}: <b>${e.on ? 'settled into villages' : 'went back to moving camp'}</b> <span class="f">(farming ${pct(e.share)} of food)</span>`;
@@ -288,6 +319,17 @@ function describe(e) {
     case 'extinct': return `${n(e.soc)} <b>died out</b>`;
     default: return esc(JSON.stringify(e));
   }
+}
+function renderDisease() {
+  const r = result;
+  const ob = r.events.filter(e => e.t === 'epidemic');
+  if (!ob.length) { $('#disease').innerHTML = '<p class="muted">No outbreaks in this run.</p>'; return; }
+  const by = new Map();
+  for (const e of ob) { const x = by.get(e.strain) || { n: 0, sick: 0, dead: 0, first: e.y, last: e.y, socs: new Set() }; x.n++; x.sick += e.infected; x.dead += e.deaths; x.last = e.y; x.socs.add(e.soc); by.set(e.strain, x); }
+  const src = { wild: 'wild animals', herd: 'herds', crowd: 'crowded villages' };
+  const rows = [...by.entries()].sort((a, b) => b[1].dead - a[1].dead);
+  $('#disease').innerHTML = `<table><thead><tr><th>Disease</th><th>Kind</th><th>Came from</th><th class="num">Spread rate</th><th class="num">Fatality</th><th class="num">Outbreaks</th><th class="num">Sick</th><th class="num">Dead</th><th class="num">Years</th><th>Struck</th></tr></thead><tbody>` +
+    rows.map(([id, x]) => { const st = r.strains[id] || {}; return `<tr><td><b>${esc(st.name || '?')}</b></td><td>${esc(st.kind || '')}</td><td>${esc(src[st.source] || '')}</td><td class="num">${st.R0 ?? ''}</td><td class="num">${st.cfr != null ? pct(st.cfr) : ''}</td><td class="num">${x.n}</td><td class="num">${x.sick}</td><td class="num">${x.dead}</td><td class="num">${x.first}–${x.last}</td><td>${[...x.socs].map(i => `<span class="dot" style="background:${r.societies[i].color}"></span>`).join('')}</td></tr>`; }).join('') + '</tbody></table>';
 }
 function renderGenes() {
   const r = result;
@@ -325,8 +367,54 @@ function startSweep() {
   const seeds = Math.max(2, +$('#sSeeds').value || 10);
   const envs = [...$('#sweepEnvs').querySelectorAll('input:checked')].map(i => i.value);
   if (!envs.length) { $('#sStatus').textContent = 'Tick at least one world.'; $('#sGo').disabled = false; return; }
-  $('#sStatus').textContent = `${pairs.length} pairings × ${envs.length} world${envs.length > 1 ? 's' : ''} × ${seeds} seeds…`;
-  getWorker().postMessage({ type: 'sweep', pairs, envs, seeds, params: { years: +$('#sYears').value || 500 } });
+  const years = +$('#sYears').value || 500;
+  const nTune = Object.keys(tune).length;
+  $('#sTuned').hidden = !nTune;
+  $('#sTuned').textContent = nTune ? `Using ${nTune} tuned baseline${nTune > 1 ? 's' : ''}: ${Object.keys(tune).map(k => PARAM_UI.find(p => p.path === k)?.label).join(', ')}.` : '';
+  $('#sStatus').textContent = `${pairs.length} pairings × ${envs.length} world${envs.length > 1 ? 's' : ''} × ${seeds} seeds = ${pairs.length * envs.length * seeds} runs…`;
+  if ($('#sWhere').value === 'hub') return hubSweep({ pairs, envs, seeds, years, tune });
+  getWorker().postMessage({ type: 'sweep', pairs, envs, seeds, params: { ...tuningToParams(tune), years } });
+}
+
+// The hub runs sweeps on its own CPUs and keeps the results. If it cannot be reached
+// (for example when this page is opened somewhere other than its own site), fall back to the browser.
+let pollTimer = null;
+async function hubSweep(body) {
+  clearTimeout(pollTimer);
+  try {
+    const r = await fetch('api/sweeps', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    showHubJob(j);
+  } catch (e) {
+    if (e instanceof TypeError || /JSON|Unexpected/.test(String(e))) {
+      $('#sStatus').textContent = 'The hub is not reachable from here; running in this browser instead…';
+      $('#sWhere').value = 'browser';
+      getWorker().postMessage({ type: 'sweep', pairs: body.pairs, envs: body.envs, seeds: body.seeds, params: { ...tuningToParams(body.tune), years: body.years } });
+    } else { $('#sStatus').textContent = 'The hub refused the sweep: ' + e.message; $('#sGo').disabled = false; }
+  }
+}
+function showHubJob(j) {
+  sweepResults = j.results || []; renderSweep();
+  $('#sBar').style.width = (100 * (j.done || 0) / (j.total || 1)) + '%';
+  const tag = `Hub sweep ${j.id} · model v${j.version}`;
+  if (j.status === 'done') { $('#sBar').style.width = '100%'; $('#sStatus').textContent = `${tag} · done: ${j.total} runs${j.finished ? ', finished ' + j.finished.slice(0, 16).replace('T', ' ') + ' UTC' : ''}`; $('#sGo').disabled = false; loadRecent(); return; }
+  if (j.status === 'failed') { $('#sStatus').textContent = `${tag} · failed: ${j.error}`; $('#sGo').disabled = false; return; }
+  $('#sStatus').textContent = j.status === 'queued' ? `${tag} · waiting in line (position ${j.position})` : `${tag} · ${j.done} / ${j.total} runs`;
+  pollTimer = setTimeout(async () => {
+    try { const r = await fetch('api/sweeps/' + j.id); showHubJob(await r.json()); }
+    catch { $('#sStatus').textContent = `${tag} · lost touch with the hub; it keeps running there. Open it again from Recent hub sweeps.`; $('#sGo').disabled = false; }
+  }, 2000);
+}
+async function loadRecent() {
+  try {
+    const r = await fetch('api/sweeps'); if (!r.ok) throw 0;
+    const list = await r.json();
+    $('#sRecentBox').hidden = !list.length;
+    $('#sRecent').innerHTML = `<table><thead><tr><th>Sweep</th><th>Status</th><th>Model</th><th>Worlds</th><th class="num">Pairs</th><th class="num">Seeds</th><th class="num">Runs</th><th>Finished</th><th></th></tr></thead><tbody>` +
+      list.map(j => `<tr><td><code>${j.id}</code></td><td>${j.status}${j.status === 'running' ? ` ${Math.round(100 * j.done / j.total)}%` : ''}</td><td>v${esc(j.version || '?')}</td><td>${(j.envs || []).map(e => esc(ENVIRONMENTS[e]?.name || e)).join(', ')}</td><td class="num">${j.pairs ?? ''}</td><td class="num">${j.seeds ?? ''}</td><td class="num">${j.total}</td><td>${j.finished ? j.finished.slice(0, 16).replace('T', ' ') : ''}</td><td><button data-job="${j.id}">Open</button></td></tr>`).join('') + '</tbody></table>';
+    $('#sRecent').querySelectorAll('button[data-job]').forEach(b => b.onclick = async () => { clearTimeout(pollTimer); const r = await fetch('api/sweeps/' + b.dataset.job); showHubJob(await r.json()); });
+  } catch { $('#sRecentBox').hidden = true; $('#sWhere').value = 'browser'; }
 }
 function renderSweep() {
   const ci = s => `${pct(s.mean)} <span class="ci">${pct(s.lo)}–${pct(s.hi)}</span>`;
@@ -337,15 +425,16 @@ function renderSweep() {
   const envs = [...new Set(sweepResults.map(r => r.env))];
   const M = {};
   sweepResults.forEach(r => [[r.a, 0], [r.b, 1]].forEach(([n, i]) => { const c = ((M[n] = M[n] || {})[r.env] = M[n][r.env] || { share: 0, surv: 0, k: 0 }); c.share += r.stats[i].share.mean; c.surv += r.stats[i].survival.mean; c.k++; }));
-  const names = Object.keys(M).sort((x, z) => envs.reduce((t, e) => t + (M[z][e] ? M[z][e].share / M[z][e].k : 0), 0) - envs.reduce((t, e) => t + (M[x][e] ? M[x][e].share / M[x][e].k : 0), 0));
-  const best = Object.fromEntries(envs.map(e => [e, names.reduce((b, n) => M[n][e] && (!b || M[n][e].share / M[n][e].k > M[b][e].share / M[b][e].k) ? n : b, null)]));
+  const sc = (n, e) => M[n][e] ? M[n][e].surv / M[n][e].k + 0.001 * M[n][e].share / M[n][e].k : 0; // survival wins; share breaks ties
+  const names = Object.keys(M).sort((x, z) => envs.reduce((t, e) => t + sc(z, e), 0) - envs.reduce((t, e) => t + sc(x, e), 0));
+  const best = Object.fromEntries(envs.map(e => [e, names.reduce((b, n) => M[n][e] && (!b || sc(n, e) > sc(b, e)) ? n : b, null)]));
   $('#sMatrix').innerHTML = names.length ? `<table><thead><tr><th>Society</th>${envs.map(e => `<th class="num">${esc(envName(e))}</th>`).join('')}</tr></thead><tbody>` +
-    names.map(n => `<tr><td>${esc(n)}</td>${envs.map(e => { const c = M[n][e]; return c ? `<td class="cell${best[e] === n ? ' best' : ''}"><b>${pct(c.share / c.k)}</b> <span class="ci">(${pct(c.surv / c.k)})</span></td>` : '<td></td>'; }).join('')}</tr>`).join('') + '</tbody></table>' : '<p class="muted">Run a sweep to compare worlds.</p>';
+    names.map(n => `<tr><td>${esc(n)}</td>${envs.map(e => { const c = M[n][e]; return c ? `<td class="cell${best[e] === n ? ' best' : ''}"><b>${pct(c.surv / c.k)}</b> <span class="ci">share ${pct(c.share / c.k)}</span></td>` : '<td></td>'; }).join('')}</tr>`).join('') + '</tbody></table>' : '<p class="muted">Run a sweep to compare worlds.</p>';
   const agg = {};
   sweepResults.forEach(r => [[r.a, 0], [r.b, 1]].forEach(([n, i]) => { agg[n] = agg[n] || { share: 0, surv: 0, pop: 0, k: 0 }; agg[n].share += r.stats[i].share.mean; agg[n].surv += r.stats[i].survival.mean; agg[n].pop += r.stats[i].finalPop.mean; agg[n].k++; }));
-  const rows = Object.entries(agg).sort((x, z) => z[1].share / z[1].k - x[1].share / x[1].k);
-  $('#sRank').innerHTML = rows.length ? `<table><thead><tr><th>#</th><th>Society</th><th class="num">Mean share, all worlds</th><th class="num">Mean survival</th><th class="num">Mean final pop.</th><th class="num">Opponents</th></tr></thead><tbody>` +
-    rows.map(([n, a], i) => `<tr><td>${i + 1}</td><td>${esc(n)}</td><td class="num">${pct(a.share / a.k)}</td><td class="num">${pct(a.surv / a.k)}</td><td class="num">${(a.pop / a.k).toFixed(0)}</td><td class="num">${a.k}</td></tr>`).join('') + '</tbody></table>' : '<p class="muted">Run a sweep to rank strategies.</p>';
+  const rows = Object.entries(agg).sort((x, z) => (z[1].surv / z[1].k - x[1].surv / x[1].k) + 0.001 * (z[1].share / z[1].k - x[1].share / x[1].k));
+  $('#sRank').innerHTML = rows.length ? `<table><thead><tr><th>#</th><th>Society</th><th class="num">Survival, all worlds</th><th class="num">Mean share</th><th class="num">Mean final pop.</th><th class="num">Opponents</th></tr></thead><tbody>` +
+    rows.map(([n, a], i) => `<tr><td>${i + 1}</td><td>${esc(n)}</td><td class="num"><b>${pct(a.surv / a.k)}</b></td><td class="num">${pct(a.share / a.k)}</td><td class="num">${(a.pop / a.k).toFixed(0)}</td><td class="num">${a.k}</td></tr>`).join('') + '</tbody></table>' : '<p class="muted">Run a sweep to rank strategies.</p>';
 }
 
 // ---------- wiring ----------
@@ -354,7 +443,7 @@ document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
   ['run', 'sweep', 'about'].forEach(t => $('#tab-' + t).hidden = t !== b.dataset.tab);
   $('#setup').hidden = b.dataset.tab === 'about';
   $('#setup .runbar').hidden = b.dataset.tab !== 'run';
-  if (b.dataset.tab === 'sweep') renderSweepPick();
+  if (b.dataset.tab === 'sweep') { renderSweepPick(); loadRecent(); }
 });
 $('#go').onclick = run;
 $('#dice').onclick = () => { $('#seed').value = 1 + Math.floor(Math.random() * 99999); run(); };
@@ -369,9 +458,10 @@ $('#ver').title = `commit ${BUILD.commit}, built ${BUILD.built}`;
 $('#verFull').textContent = `v${BUILD.version} · commit ${BUILD.commit} · built ${BUILD.built}`;
 $('#env').innerHTML = Object.entries(ENVIRONMENTS).map(([k, e]) => `<option value="${k}">${esc(e.name)}</option>`).join('');
 const showBlurb = () => { $('#envBlurb').textContent = ENVIRONMENTS[$('#env').value].blurb; };
-$('#env').onchange = () => { showBlurb(); saveState(); run(); };
+$('#env').onchange = () => { showBlurb(); renderTune(); saveState(); run(); };
 loadState();
 showBlurb();
+renderTune();
 renderSetup();
 renderSweep();
 run();

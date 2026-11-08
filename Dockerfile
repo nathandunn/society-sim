@@ -1,7 +1,7 @@
-FROM node:22-alpine AS build
+FROM node:22-alpine
 WORKDIR /app
 COPY . .
 RUN node tools/build.mjs && node tools/test.mjs
-
-FROM nginx:alpine
-COPY --from=build /app/public /usr/share/nginx/html
+ENV PORT=80 DATA_DIR=/data
+EXPOSE 80
+CMD ["node", "server/server.mjs"]

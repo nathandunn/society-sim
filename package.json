@@ -1,12 +1,13 @@
 {
   "name": "society-sim",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Pits social organisation strategies against each other over 500 years in forest, farmland, desert and island worlds",
   "type": "module",
   "scripts": {
     "build": "node tools/build.mjs",
     "test": "node tools/test.mjs",
-    "sim": "node tools/run.mjs"
+    "sim": "node tools/run.mjs",
+    "start": "node server/server.mjs"
   },
   "license": "MIT"
 }

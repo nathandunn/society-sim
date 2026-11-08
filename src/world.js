@@ -22,6 +22,14 @@ export const ENVIRONMENTS = {
   },
 };
 
+// Each world's parameter overrides, applied over the defaults and under the user's own tuning.
+export const ENV_PARAMS = {
+  forest: {},
+  farmland: { shocks: { fire: 0.005, storm: 0, epidemic: 0.012, flood: 0.03 } },
+  desert: { climate: { bad: 0.25, badMult: 0.5, good: 0.12, goodMult: 1.25, noise: 0.15 }, shocks: { fire: 0, storm: 0, epidemic: 0.01, rinderpest: 0.012 } },
+  islands: { shocks: { fire: 0.01, storm: 0.035, epidemic: 0.008 } },
+};
+
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
 function blank(G, landFn) {
@@ -62,7 +70,7 @@ export function buildWorld(envKey, P, R) {
     }
     return { G, patches: finish(patches), homes: [{ x: riverX(4) - 2, y: 4 }, { x: riverX(15) + 2, y: 15 }],
       startTechs: ['cultivation'], startSkills: { farm: true }, herdsPerPerson: 0,
-      params: { shocks: { fire: 0.005, storm: 0, epidemic: 0.012, flood: 0.03 } } };
+      params: ENV_PARAMS.farmland };
   }
 
   if (envKey === 'desert') {
@@ -80,7 +88,7 @@ export function buildWorld(envKey, P, R) {
     }
     return { G, patches: finish(patches), homes: [oases[0], oases[1]], startTechs: ['herding'], startSkills: { herd: true },
       herdsPerPerson: 6, waterRange: 2,
-      params: { climate: { bad: 0.25, badMult: 0.5, good: 0.12, goodMult: 1.25, noise: 0.15 }, shocks: { fire: 0, storm: 0, epidemic: 0.01, rinderpest: 0.012 } } };
+      params: ENV_PARAMS.desert };
   }
 
   if (envKey === 'islands') {
@@ -103,7 +111,7 @@ export function buildWorld(envKey, P, R) {
     const centre = k => { const s = isles[k]; return { x: Math.round(s.x), y: Math.round(s.y) }; };
     return { G, patches: finish(patches), homes: [centre(0), centre(1)], startTechs: [], startSkills: {}, herdsPerPerson: 0,
       techReq: { boats: [] }, islands: true, isleCount: isles.length,
-      params: { shocks: { fire: 0.01, storm: 0.035, epidemic: 0.008 } } };
+      params: ENV_PARAMS.islands };
   }
 
   // forest (default): the v1 island
@@ -115,5 +123,5 @@ export function buildWorld(envKey, P, R) {
     p.K.plant = K.plant * j(); p.K.game = K.game * j(); p.K.fish = p.coast ? K.fish * j() : 0;
     p.arable = R() < 0.12; p.fert = 0.6;
   }
-  return { G, patches: finish(patches), homes: [{ x: 3, y: 10 }, { x: 16, y: 10 }], startTechs: [], startSkills: {}, herdsPerPerson: 0, params: {} };
+  return { G, patches: finish(patches), homes: [{ x: 3, y: 10 }, { x: 16, y: 10 }], startTechs: [], startSkills: {}, herdsPerPerson: 0, params: ENV_PARAMS.forest };
 }

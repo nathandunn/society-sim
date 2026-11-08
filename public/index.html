@@ -34,6 +34,12 @@
       <button id="dice" title="New random seed">New seed</button>
     </div>
     <p id="envBlurb" class="hint envblurb"></p>
+    <details id="tune" class="tune">
+      <summary>World &amp; baselines <span id="tuneCount" class="muted"></span></summary>
+      <p class="hint">Tune the model. Defaults are the forager-calibrated baselines for the world you picked; changed values stay in the link and apply to single runs and sweeps alike.</p>
+      <div id="tuneBody" class="tunegrid"></div>
+      <div class="runbar"><button id="tuneReset">Reset all to defaults</button></div>
+    </details>
   </section>
 
   <section id="tab-run">
@@ -60,6 +66,11 @@
       </section>
     </div>
     <section class="panel">
+      <h2>Diseases</h2>
+      <p class="hint">Every contagious strain in this run. Small bands cannot keep a disease going, so outbreaks burn out and return only from animals, from crowded villages, or from contact with other peoples. Survivors are immune; children born since the last outbreak are not. Hunger makes every illness deadlier.</p>
+      <div id="disease" class="tablewrap"></div>
+    </section>
+    <section class="panel">
       <h2>Culture over time</h2>
       <p class="hint">Every rule change, with how it happened: drift, imitation of a more successful neighbour, fission, or the threat-driven rise and peace-driven decay of ritual.</p>
       <div id="genes" class="tablewrap"></div>
@@ -70,19 +81,22 @@
   <section id="tab-sweep" hidden>
     <section class="panel">
       <h2>Sweep</h2>
-      <p class="hint">Round robin of the societies you tick, plus the two custom ones above. Each pair runs N seeds; survival counts a founder as alive if it or any daughter band is alive at the end.</p>
+      <p class="hint">Round robin of the societies you tick, plus the two custom ones above, in each world you tick. Each pair runs N seeds. A society wins by surviving: its line counts as alive if the founders or any band that split from them are alive at the end. Your baseline tuning applies.</p>
       <div id="sweepPick" class="pickgrid"></div>
       <h3>Worlds</h3>
       <div id="sweepEnvs" class="pickgrid"></div>
       <div class="runbar">
-        <label>Seeds per pair <input id="sSeeds" type="number" value="10" min="2" max="500"></label>
-        <label>Years <input id="sYears" type="number" value="500" min="20" max="2000" step="10"></label>
+        <label>Seeds per pair <input id="sSeeds" type="number" value="50" min="2" max="200"></label>
+        <label>Years <input id="sYears" type="number" value="500" min="20" max="1000" step="10"></label>
+        <label>Run on <select id="sWhere"><option value="hub">the hub (fast, saved)</option><option value="browser">this browser</option></select></label>
         <button id="sGo" class="primary">Run sweep</button>
         <span id="sStatus" class="muted"></span>
       </div>
       <div class="bar"><div id="sBar"></div></div>
+      <p id="sTuned" class="hint" hidden></p>
     </section>
-    <section class="panel"><h2>Which society does best in which world</h2><p class="hint">Mean share of the world's people living under each society's line at the end, over every opponent and seed. Survival in brackets.</p><div id="sMatrix" class="tablewrap"></div></section>
+    <section class="panel" id="sRecentBox" hidden><h2>Recent hub sweeps</h2><p class="hint">Sweeps already run on the hub, newest first. Identical sweeps are answered from here instantly.</p><div id="sRecent" class="tablewrap"></div></section>
+    <section class="panel"><h2>Which society survives in which world</h2><p class="hint">Share of runs in which each society's line (the founders or any band that split from them) is still alive at the end, over every opponent and seed. Surviving is winning; the share of the world's people breaks ties.</p><div id="sMatrix" class="tablewrap"></div></section>
     <section class="panel"><h2>Ranking</h2><div id="sRank" class="tablewrap"></div></section>
     <section class="panel"><h2>Pairings</h2><div id="sTable" class="tablewrap"></div></section>
   </section>
