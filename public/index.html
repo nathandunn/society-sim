@@ -12,8 +12,8 @@
 <body>
 <header class="top">
   <div>
-    <h1>Society Sim</h1>
-    <p class="sub">Two forager bands, one rich-forest island, 500 years. Which way of organising people survives — and why.</p>
+    <h1>Society Sim <span id="ver" class="ver"></span></h1>
+    <p class="sub">Two bands, one world, 500 years. Which way of organising people survives in forest, farmland, desert or islands — and why.</p>
   </div>
   <nav class="tabs" role="tablist">
     <button class="tab on" data-tab="run" role="tab">Single run</button>
@@ -28,11 +28,12 @@
     <div class="runbar">
       <label>Seed <input id="seed" type="number" value="1" min="1"></label>
       <label>Years <input id="years" type="number" value="500" min="20" max="2000" step="10"></label>
-      <label>Environment <select id="env"><option value="forest">Rich forest</option><option disabled>Desert nomadic (v2)</option></select></label>
+      <label>World <select id="env"></select></label>
       <label class="chk"><input id="freeze" type="checkbox"> Freeze genomes</label>
       <button id="go" class="primary">Run 500 years</button>
       <button id="dice" title="New random seed">New seed</button>
     </div>
+    <p id="envBlurb" class="hint envblurb"></p>
   </section>
 
   <section id="tab-run">
@@ -71,14 +72,17 @@
       <h2>Sweep</h2>
       <p class="hint">Round robin of the societies you tick, plus the two custom ones above. Each pair runs N seeds; survival counts a founder as alive if it or any daughter band is alive at the end.</p>
       <div id="sweepPick" class="pickgrid"></div>
+      <h3>Worlds</h3>
+      <div id="sweepEnvs" class="pickgrid"></div>
       <div class="runbar">
-        <label>Seeds per pair <input id="sSeeds" type="number" value="20" min="2" max="500"></label>
+        <label>Seeds per pair <input id="sSeeds" type="number" value="10" min="2" max="500"></label>
         <label>Years <input id="sYears" type="number" value="500" min="20" max="2000" step="10"></label>
         <button id="sGo" class="primary">Run sweep</button>
         <span id="sStatus" class="muted"></span>
       </div>
       <div class="bar"><div id="sBar"></div></div>
     </section>
+    <section class="panel"><h2>Which society does best in which world</h2><p class="hint">Mean share of the world's people living under each society's line at the end, over every opponent and seed. Survival in brackets.</p><div id="sMatrix" class="tablewrap"></div></section>
     <section class="panel"><h2>Ranking</h2><div id="sRank" class="tablewrap"></div></section>
     <section class="panel"><h2>Pairings</h2><div id="sTable" class="tablewrap"></div></section>
   </section>
@@ -86,10 +90,18 @@
   <section id="tab-about" hidden class="panel prose">
     <h2>The model</h2>
     <p>Every person is an agent with a mother, a father, skills and a cause of death. One tick is one year. Each society carries a <b>genome</b> of rules — marriage, mate choice, descent, residence, labour, sharing, foraging, trade, governance, norm enforcement, outgroup stance, captives, famine policy, fission size and ritual — and the rules change only what they mechanically change.</p>
+    <h3>Worlds</h3>
+    <ul>
+      <li><b>Rich forest.</b> Forager island with a rich shore; a few clearings could be farmed if someone invents cultivation.</li>
+      <li><b>Farmland valley.</b> Alluvial river valley; cultivation is known. Fields out-yield foraging but deplete without fallow, flood, tie villages down (shorter birth spacing, more disease) and can be owned and inherited.</li>
+      <li><b>Desert oases.</b> Failing rains and drying oases; bands keep herds that graze, breed, die in drought and plague, and are rustled in raids. Camps must stay near water.</li>
+      <li><b>Islands.</b> Five islands in a fish-rich sea. No contact, trade or war across water until a band invents boats; then empty islands can be settled.</li>
+    </ul>
+    <p>Who may work a field or tend a herd is set by the <b>Fields &amp; herds owned by</b> rule: the whole camp, the lineage, the household (passed to an heir by the descent rule), or the ruler (who takes a quarter of the yield). Wealth raises status, and status wins wives.</p>
     <h3>Each year</h3>
     <ol>
       <li><b>Climate and shocks.</b> A good, normal or bad year; rare forest fires, storms and epidemics.</li>
-      <li><b>Forage.</b> Workers pick plant, game or fish patches within range of camp by expected return. Hunting is high-variance. Patches deplete and regrow logistically, so carrying capacity emerges rather than being set. Camps move toward richer ground.</li>
+      <li><b>Forage, farm and herd.</b> Workers pick plant, game or fish patches within range of camp by expected return. Hunting is high-variance. Patches deplete and regrow logistically, so carrying capacity emerges rather than being set. Camps move toward richer ground.</li>
       <li><b>Share.</b> Food flows by the sharing gene (household, lineage, camp, or ruler with an elite cut), with some demand-sharing between groups. Pooling invites free-riding unless norms are enforced.</li>
       <li><b>Live and die.</b> Forager-calibrated hazards (≈18% infant mortality, ≈60% reach 15) for infant illness, infection, accident, other illness and old age, amplified by hunger and reduced by medicine. Fathers, grandmothers and residence rules change child survival.</li>
       <li><b>Pair and give birth.</b> Marriage rules, incest avoidance, polygyny by status, intermarriage across societies, birth spacing, maternal death, famine infanticide.</li>
@@ -107,7 +119,7 @@
       <li>Epstein &amp; Axtell, Sugarscape; Janssen (2009), Artificial Anasazi — carrying capacity dominates.</li>
       <li>Gurven &amp; Kaplan (2007) life tables (approximate baselines; every parameter is in <code>src/params.js</code>).</li>
     </ul>
-    <p class="muted">Source: <a href="https://github.com/nathandunn/society-sim">github.com/nathandunn/society-sim</a></p>
+    <p class="muted">Source: <a href="https://github.com/nathandunn/society-sim">github.com/nathandunn/society-sim</a> · <span id="verFull"></span></p>
   </section>
 </main>
 <script type="module" src="app.js"></script>

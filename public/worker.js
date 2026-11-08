@@ -12,12 +12,14 @@ self.onmessage = (ev) => {
     } else if (m.type === 'sweep') {
       const out = [];
       let done = 0;
-      const total = m.pairs.length * m.seeds;
-      for (const p of m.pairs) {
-        const r = runPair(p.a.genome, p.b.genome, p.a.name, p.b.name, m.seeds, m.params, () => {
+      const envs = m.envs && m.envs.length ? m.envs : ['forest'];
+      const total = m.pairs.length * m.seeds * envs.length;
+      for (const env of envs) for (const p of m.pairs) {
+        const r = runPair(p.a.genome, p.b.genome, p.a.name, p.b.name, m.seeds, { ...m.params, env }, () => {
           done++; if (done % 2 === 0 || done === total) self.postMessage({ type: 'progress', done, total });
         });
         delete r.runs; // keep payload small; stats carry the answer
+        r.env = env;
         out.push(r);
         self.postMessage({ type: 'pair', result: r });
       }

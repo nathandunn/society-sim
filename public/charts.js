@@ -46,7 +46,7 @@ export function lineChart(host, { series, yMin, yMax, yFormat = fmt, onPick, pic
   if (onPick) hit.addEventListener('click', ev => onPick(Math.max(0, Math.min(n - 1, toI(ev)))));
 }
 
-export function stackedBars(host, { labels, stacks, height = 190, onPick, onLegend, activeKey = null }) {
+export function stackedBars(host, { labels, stacks, height = 190, onPick, onLegend, activeKey = null, unit = 'deaths' }) {
   host.innerHTML = '';
   const W = Math.max(300, host.clientWidth || 600), H = height, m = { l: 40, r: 12, t: 10, b: 22 };
   const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', height: H, class: 'chart' }, host);
@@ -68,7 +68,7 @@ export function stackedBars(host, { labels, stacks, height = 190, onPick, onLege
     if (i % Math.ceil(n / 10) === 0) { const tx = el('text', { x: m.l + i * bw + bw / 2, y: H - 6, 'text-anchor': 'middle', class: 'tick' }, svg); tx.textContent = lab; }
     const hit = el('rect', { x: m.l + i * bw, y: m.t, width: bw, height: H - m.t - m.b, fill: 'transparent' }, svg);
     hit.addEventListener('pointerenter', () => {
-      tip.innerHTML = `<b>${lab}</b> · ${totals[i]} deaths` + stacks.filter(s => s.values[i]).map(s => `<div><i style="background:${s.color}"></i>${s.name}: ${s.values[i]}</div>`).join('');
+      tip.innerHTML = `<b>${lab}</b> · ${fmt(totals[i])} ${unit}` + stacks.filter(s => s.values[i]).map(s => `<div><i style="background:${s.color}"></i>${s.name}: ${s.values[i]}</div>`).join('');
       tip.style.display = 'block';
       const r = svg.getBoundingClientRect(); tip.style.left = Math.min(((m.l + i * bw) / W) * r.width + 10, r.width - 170) + 'px';
     });

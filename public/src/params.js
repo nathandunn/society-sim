@@ -2,6 +2,9 @@
 // (approximate; Gurven & Kaplan 2007 style): q0 ~ 0.2, ~60% survive to 15,
 // TFR ~ 5-6, modal adult death ~ 70. Every value is tunable from the UI.
 
+// Model version: bump with package.json (tests check they match). Stamped into every result.
+export const MODEL_VERSION = '0.2.0';
+
 export const DEFAULT_PARAMS = {
   years: 500,
   startPerSociety: 50,
@@ -25,7 +28,15 @@ export const DEFAULT_PARAMS = {
   childNeedFrac: 0.55,      // under 12
   elderNeedFrac: 0.8,       // 60+
   workFrom: 12, workTo: 62,
-  rate: { plant: 2600000, game: 3400000, fish: 2900000 },   // per full-time worker at full skill & full stock
+  rate: { plant: 2600000, game: 3400000, fish: 2900000, farm: 4800000 },   // per full-time worker at full skill & full stock
+  farmersPerField: 3,       // a field patch is fully worked by about three farmers
+  fieldDepletion: 0.006,    // fertility lost per farmer-year
+  fieldRecovery: 0.15,      // share of lost fertility regained per fallow year
+  nursingYearsSedentary: 1, // weaning foods shorten birth spacing once people farm
+  herdYield: 180000,        // kcal per tended livestock unit per year (milk, blood, culled meat)
+  herdPerHerder: 30,        // livestock units one herder can tend
+  herdGrowth: 0.16,         // yearly herd increase when well grazed and tended
+  herdGraze: 45000,         // grass (plant-stock units) one livestock unit eats per year
   gameVariance: 0.55,       // hunting is high-variance
   travelCost: 0.04,         // yield loss per grid unit of distance from camp
   forageRadius: 6,          // grid units a camp forages in
@@ -34,7 +45,8 @@ export const DEFAULT_PARAMS = {
   storeDecay: 0.55,         // fraction of stores lost per year without preservation
   gluttLoss: 0.12,          // harvest spoiled in glut seasons without preservation
 
-  // --- Environment: rich forest ---
+  // --- Environment (see world.js; these are the rich-forest baselines) ---
+  env: 'forest',
   grid: 20,                 // 20x20 = 400 patches
   coastWidth: 2,
   K: { plant: 4000000, game: 3200000, fish: 3400000 },  // per patch (fish only coastal)
@@ -69,7 +81,7 @@ export const DEFAULT_PARAMS = {
   driftRate: 0.0015,
   imitateRate: 0.03,
   ritualDecay: 0.003,
-  maxSocieties: 6,
+  maxSocieties: 10,
 };
 
 // Discrete technologies. effects are multipliers / reductions consumed by the engine.
@@ -89,9 +101,15 @@ export const TECHS = {
   boneSetting: { domain: 'heal',  name: 'Bone setting',       req: ['woundCare'],   start: false },
   quarantine:  { domain: 'heal',  name: 'Quarantine norm',    req: ['herbal'],      start: false },
   hygiene:     { domain: 'heal',  name: 'Hygiene & water',    req: [],              start: false },
+  cultivation: { domain: 'plant', keep: 'farm', name: 'Cultivation', req: [],         start: false, needs: 'arable', rarity: 0.15 },
+  irrigation:  { domain: 'farm',  name: 'Irrigation',         req: ['cultivation'], start: false, needs: 'water' },
+  granary:     { domain: 'craft', name: 'Granaries',          req: ['cultivation'], start: false },
+  herding:     { domain: 'hunt', keep: 'herd', name: 'Herding',      req: [],          start: false, needs: 'grass', rarity: 0.15 },
+  dairying:    { domain: 'herd',  name: 'Dairying',           req: ['herding'],     start: false },
+  wells:       { domain: 'craft', name: 'Wells',              req: [],              start: false, needs: 'oasis' },
 };
 
-export const DOMAINS = ['plant', 'hunt', 'fish', 'fight', 'heal', 'craft'];
+export const DOMAINS = ['plant', 'hunt', 'fish', 'farm', 'herd', 'fight', 'heal', 'craft'];
 
 export const CAUSES = [
   'infant illness', 'infection', 'accident', 'other illness', 'old age', 'starvation',

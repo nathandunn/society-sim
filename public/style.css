@@ -40,6 +40,10 @@ label input, label select { color: var(--ink); }
 input[type=number] { width: 6em; }
 .chk { gap: 5px; }
 .runbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
+.envblurb { margin: 8px 0 0; max-width: 75ch; }
+td.cell { text-align: right; }
+td.cell b { font-weight: 600; }
+td.best { background: var(--chip); }
 
 .socs { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
 .soc { border: 1px solid var(--line); border-radius: 9px; padding: 12px; border-top: 4px solid var(--c); }
@@ -108,3 +112,4 @@ td.num, th.num { text-align: right; }
 .exports { display: flex; gap: 8px; margin-top: 12px; }
 .prose { max-width: 80ch; }
 .prose li { margin-bottom: 4px; }
+.ver { font-family: var(--mono); font-size: 12px; font-weight: 400; color: var(--muted); letter-spacing: 0; vertical-align: middle; margin-left: 6px; }

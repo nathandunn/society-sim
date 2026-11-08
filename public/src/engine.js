@@ -2,8 +2,9 @@
 // One tick = one year. Every person is an agent with genealogy; every birth, death,
 // gene change and tech change is logged with its cause and contributing factors.
 
-import { DEFAULT_PARAMS, TECHS, DOMAINS, CAUSES } from './params.js';
+import { DEFAULT_PARAMS, TECHS, DOMAINS, CAUSES, MODEL_VERSION } from './params.js';
 import { GENES, GENE_KEYS, mutateGene, cloneGenome } from './genome.js';
+import { buildWorld, ENVIRONMENTS } from './world.js';
 
 export function mulberry32(seed) {
   let a = seed >>> 0;
@@ -30,7 +31,7 @@ export function deepMerge(base, over) {
 }
 
 export function runSim(cfg) {
-  const P = deepMerge(DEFAULT_PARAMS, cfg.params || {});
+  let P = deepMerge(DEFAULT_PARAMS, cfg.params || {});
   const rng = mulberry32(cfg.seed ?? 1);
   const R = () => rng();
   const pick = arr => arr[Math.floor(R() * arr.length)];
@@ -39,15 +40,16 @@ export function runSim(cfg) {
   const nFounders = cfg.genomes.length;
 
   // ---------- World ----------
-  const G = P.grid;
-  const patches = [];
-  for (let y = 0; y < G; y++) for (let x = 0; x < G; x++) {
-    const edge = Math.min(x, y, G - 1 - x, G - 1 - y);
-    const coast = edge < P.coastWidth;
-    const jitter = () => 0.75 + R() * 0.5;
-    const K = { plant: P.K.plant * jitter(), game: P.K.game * jitter(), fish: coast ? P.K.fish * jitter() : 0 };
-    patches.push({ i: patches.length, x, y, coast, K, stock: { ...K }, owner: -1 });
-  }
+  const envKey = ENVIRONMENTS[P.env] ? P.env : 'forest';
+  const W = buildWorld(envKey, P, R);
+  P = deepMerge(P, W.params || {});
+  const G = W.G;
+  const patches = W.patches;
+  patches.forEach(pt => { pt.fertNow = pt.fert; pt.lastFarmed = -99; pt.farmers = 0; });
+  const patchAt = (x, y) => patches[clamp(Math.round(y), 0, G - 1) * G + clamp(Math.round(x), 0, G - 1)];
+  const reqOf = t => (W.techReq && W.techReq[t]) || TECHS[t].req;
+  const envHas = { arable: patches.some(p => p.land && p.arable), water: patches.some(p => p.water), grass: patches.some(p => p.grass), oasis: patches.some(p => p.oasis) };
+  let curYear = 0;
 
   // ---------- Logging ----------
   const events = [];
@@ -56,20 +58,22 @@ export function runSim(cfg) {
   // ---------- People ----------
   const people = [];
   let nextId = 1;
+  let popVer = 0, memCache = { ver: -1, map: new Map() };
+  const setSoc = (p, id) => { p.soc = id; popVer++; };
   const byId = new Map();
   function makePerson(o) {
     const p = {
       id: nextId++, sex: o.sex, born: o.born, mother: o.mother || 0, father: o.father || 0,
       soc: o.soc, status: o.status || 'free', spouses: [], alive: true, died: null, cause: null,
-      skill: o.skill || { plant: 0.05, hunt: 0.05, fish: 0.05, fight: 0.05, heal: 0.05, craft: 0.05 },
+      skill: o.skill || Object.fromEntries(DOMAINS.map(d => [d, 0.05])),
       coop: clamp(o.coop ?? 0.5, 0, 1), aggr: clamp(o.aggr ?? 0.5, 0, 1), flair: R(),
       lastBirth: -99, kids: [], matriline: o.matriline || 0, patriline: o.patriline || 0,
       ancestry: o.ancestry || new Array(nFounders).fill(0), freedYear: o.freedYear ?? null,
-      foodRatio: 1, activity: null, raided: false, origin: o.soc,
+      foodRatio: 1, activity: null, raided: false, origin: o.soc, wealth: 0, wealthRank: 0,
     };
     if (!p.matriline) p.matriline = p.id;
     if (!p.patriline) p.patriline = p.id;
-    people.push(p); byId.set(p.id, p);
+    people.push(p); byId.set(p.id, p); popVer++;
     return p;
   }
   const age = (p, y) => y - p.born;
@@ -83,12 +87,12 @@ export function runSim(cfg) {
       home, alive: true, techs: new Set(), stores: new Map(), grievance: {}, trust: {}, tradeLink: {},
       leader: 0, cohesionPenalty: 0, lastRaidYear: -99, lastPressure: {}, parent, founded: 0, ended: null,
       endReason: null, popHistory: [], epidemicThisYear: false, foodRatio: 1, tradeBonus: 0,
-      ritualLogged: genome.ritual,
+      ritualLogged: genome.ritual, herds: new Map(), prod: {}, farmShare: 0, herdShare: 0, sedentary: false, graze: 1, tribute: 0,
     };
     societies.push(s);
     return s;
   }
-  const homes = [{ x: 3, y: Math.floor(G / 2) }, { x: G - 4, y: Math.floor(G / 2) }, { x: Math.floor(G / 2), y: 3 }, { x: Math.floor(G / 2), y: G - 4 }];
+  const homes = W.homes.concat([{ x: Math.floor(G / 2), y: 3 }, { x: Math.floor(G / 2), y: G - 4 }]);
   cfg.genomes.forEach((g, i) => makeSociety(g, (cfg.names && cfg.names[i]) || `Society ${String.fromCharCode(65 + i)}`, homes[i % homes.length]));
 
   // founders: a plausible forager age pyramid
@@ -105,7 +109,7 @@ export function runSim(cfg) {
       const a = founderAge();
       const adult = a >= 15;
       const sk = d => adult ? 0.25 + R() * 0.45 : 0.05 + R() * 0.1;
-      const skill = { plant: sk(), hunt: sk(), fish: sk(), fight: sk(), heal: sk() * 0.6, craft: sk() * 0.8 };
+      const skill = { plant: sk(), hunt: sk(), fish: sk(), farm: W.startSkills.farm ? sk() : 0.05, herd: W.startSkills.herd ? sk() : 0.05, fight: sk(), heal: sk() * 0.6, craft: sk() * 0.8 };
       const anc = new Array(nFounders).fill(0); anc[s.id] = 1;
       // founders belong to ~6 clans per society so kin sharing starts with real lineages
       const clan = -(s.id * 100 + 1 + Math.floor(R() * 6));
@@ -123,14 +127,16 @@ export function runSim(cfg) {
   });
 
   // ---------- Series ----------
-  const series = { climate: [], shocks: [] };
+  const series = { climate: [], shocks: [], env: envKey };
   const sseries = []; // per society
   function ensureSeries(s) {
     if (!sseries[s.id]) {
       const z = () => new Array(years).fill(null);
       const sd = { pop: z(), births: z(), deaths: z(), food: z(), gini: z(), techs: z(), warDeaths: z(), slaves: z(),
         ritual: z(), cohesion: z(), raidsMade: z(), raidsSuffered: z(), unpaired: z(), polygyny: z(), ancestry: z(),
-        deathsByCause: {}, skill: {} };
+        herds: z(), fields: z(), wealthGini: z(), sedentary: z(),
+        deathsByCause: {}, skill: {}, prod: {} };
+      ['plant', 'hunt', 'fish', 'farm', 'herd'].forEach(a => sd.prod[a] = z());
       CAUSES.forEach(c => sd.deathsByCause[c] = z());
       DOMAINS.forEach(d => sd.skill[d] = z());
       sseries[s.id] = sd;
@@ -140,9 +146,48 @@ export function runSim(cfg) {
   societies.forEach(ensureSeries);
 
   // ---------- Helpers ----------
-  const members = (s) => people.filter(p => p.alive && p.soc === s.id);
+  const members = (s) => {
+    if (memCache.ver !== popVer) {
+      const m = new Map();
+      for (const p of people) if (p.alive) { let a = m.get(p.soc); if (!a) m.set(p.soc, a = []); a.push(p); }
+      memCache = { ver: popVer, map: m };
+    }
+    return memCache.map.get(s.id) || [];
+  };
   const has = (s, t) => s.techs.has(t);
   const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const homeIsle = s => patchAt(s.home.x, s.home.y).isle;
+  const reach = (s, pt) => pt.land && (!W.islands || pt.isle === homeIsle(s) || has(s, 'boats'));
+  const canRaid = (A, B) => !W.islands || homeIsle(A) === homeIsle(B) || has(A, 'boats');
+  const inContact = (A, B) => !W.islands || homeIsle(A) === homeIsle(B) || has(A, 'boats') || has(B, 'boats');
+  const waterNear = (pt, s) => {
+    if (!W.waterRange) return true;
+    const r = W.waterRange + (s && has(s, 'wells') ? 2 : 0);
+    return patches.some(q => q.water && Math.abs(q.x - pt.x) <= r && Math.abs(q.y - pt.y) <= r && dist(q, pt) <= r);
+  };
+  function lineKey(p, g) {
+    if (g.descent === 'matrilineal') return 'm' + p.matriline;
+    if (g.descent === 'patrilineal') return 'p' + p.patriline;
+    if (g.descent === 'communal') return 'all';
+    return (Math.abs(p.matriline) % 2 ? 'm' + p.matriline : 'p' + p.patriline);
+  }
+  function headOf(p, g) {
+    let q = p;
+    if (curYear - q.born < 15) { const m = byId.get(q.mother); if (m && m.alive && m.soc === q.soc) q = m; }
+    const sp = q.spouses.map(id => byId.get(id)).filter(z => z && z.alive && z.soc === q.soc);
+    if (!sp.length) return q;
+    const husband = q.sex === 'M' ? q : sp[0], wife = q.sex === 'F' ? q : sp[0];
+    return g.descent === 'matrilineal' ? wife : husband;
+  }
+  // who owns fields and herds, by the Property gene
+  function ownerKey(p, s) {
+    const g = s.genome;
+    if (g.property === 'communal') return 'all';
+    if (g.property === 'ruler') return 'ruler';
+    if (g.property === 'lineage') return lineKey(p, g);
+    return 'i' + headOf(p, g).id;
+  }
+  const canUse = (p, s, key) => key === 'all' || key === 'ruler' || key === ownerKey(p, s);
   function needOf(p, y) {
     const a = age(p, y);
     if (a < 12) return P.adultNeed * P.childNeedFrac * (a < 3 ? 0.6 : 1);
@@ -156,7 +201,12 @@ export function runSim(cfg) {
   function huntMult(s) { return (has(s, 'spear') ? 1.15 : 1) * (has(s, 'bow') ? 1.3 : 1); }
   function fishMult(s) { return (has(s, 'fishWeir') ? 1.3 : 1) * (has(s, 'boats') ? 1.2 : 1); }
   function plantMult(s) { return has(s, 'pottery') ? 1.08 : 1; }
-  function decayOf(s) { return has(s, 'pottery') ? 0.2 : has(s, 'smoking') ? 0.3 : P.storeDecay; }
+  function farmMult(s) { return has(s, 'irrigation') ? 1.25 : 1; }
+  function herdMult(s) { return has(s, 'dairying') ? 1.2 : 1; }
+  function decayOf(s) {
+    const base = has(s, 'pottery') ? 0.2 : has(s, 'smoking') ? 0.3 : P.storeDecay;
+    return s.farmShare > 0.3 ? Math.min(base, has(s, 'granary') ? 0.12 : 0.25) : base; // grain keeps
+  }
   function cohesionOf(s) {
     const g = s.genome;
     const gov = { anarchy: 0, democracy: 0.2, chief: 0.1, totalitarian: 0.15 }[g.governance];
@@ -173,7 +223,7 @@ export function runSim(cfg) {
     return false;
   }
   function status(p, s) {
-    return 0.45 * (p.skill.hunt + p.skill.fight) / 2 + 0.25 * p.flair + 0.2 * (s.leader === p.id ? 1 : 0) + 0.1 * p.aggr;
+    return 0.4 * (p.skill.hunt + p.skill.fight) / 2 + 0.2 * p.flair + 0.2 * (s.leader === p.id ? 1 : 0) + 0.1 * p.aggr + 0.3 * (p.wealthRank || 0);
   }
   function kill(p, y, cause, factors = [], extra = {}) {
     if (!p.alive) return;
@@ -183,6 +233,23 @@ export function runSim(cfg) {
     sd.deaths[y] = (sd.deaths[y] || 0) + 1;
     sd.deathsByCause[cause][y] = (sd.deathsByCause[cause][y] || 0) + 1;
     log({ y, t: 'death', soc: p.soc, who: p.id, sex: p.sex, age: age(p, y), cause, f: factors, ...extra });
+    popVer++;
+    if (s.genome.property === 'household') inherit(p, s, y);
+  }
+  // household property passes down the line the descent gene names
+  function inherit(p, s, y) {
+    const key = 'i' + p.id;
+    const herd = s.herds.get(key) || 0;
+    const fields = patches.filter(pt => pt.field && pt.field.soc === s.id && pt.field.key === key);
+    if (!herd && !fields.length) return;
+    const kids = p.kids.map(id => byId.get(id)).filter(k => k && k.alive && k.soc === s.id);
+    const d = s.genome.descent;
+    const pool = d === 'matrilineal' ? kids.filter(k => k.sex === 'F') : d === 'patrilineal' ? kids.filter(k => k.sex === 'M') : kids;
+    const heir = pool.sort((a, b) => a.born - b.born)[0] || aliveSpouses(p).map(id => byId.get(id)).find(q => q && q.soc === s.id);
+    const nk = heir ? ownerKey(heir, s) : 'all';
+    if (herd) { s.herds.delete(key); s.herds.set(nk, (s.herds.get(nk) || 0) + herd); }
+    fields.forEach(pt => { if (heir) pt.field.key = nk; else pt.field = null; });
+    if (herd >= 10 || fields.length) log({ y, t: 'inherit', soc: s.id, from: p.id, to: heir ? heir.id : null, herd: Math.round(herd), fields: fields.length });
   }
   function fightersOf(s, y, home = true) {
     const ms = members(s).filter(p => p.status === 'free' || p.status === 'captive');
@@ -204,13 +271,20 @@ export function runSim(cfg) {
     return f;
   }
 
+  // founders' starting know-how and herds
+  societies.forEach(s => {
+    W.startTechs.forEach(t => s.techs.add(t));
+    if (W.herdsPerPerson) members(s).forEach(p => { const k = ownerKey(p, s); s.herds.set(k, (s.herds.get(k) || 0) + W.herdsPerPerson); });
+  });
+
   // ---------- Territory ----------
   function assignTerritory() {
     const live = societies.filter(s => s.alive);
     const pops = live.map(s => Math.max(1, members(s).length));
     for (const pt of patches) {
+      if (!pt.land) { pt.owner = -1; continue; }
       let best = -1, bd = 1e9;
-      live.forEach((s, k) => { const d = dist(pt, s.home) / Math.sqrt(pops[k]); if (d < bd) { bd = d; best = s.id; } });
+      live.forEach((s, k) => { const d = (dist(pt, s.home) + (reach(s, pt) ? 0 : 1000)) / Math.sqrt(pops[k]); if (d < bd) { bd = d; best = s.id; } });
       pt.owner = best;
     }
   }
@@ -218,6 +292,7 @@ export function runSim(cfg) {
   // ---------- Year loop ----------
   let lastSocietyCount = societies.length;
   for (let y = 0; y < years; y++) {
+    curYear = y;
     // --- climate & shocks ---
     const cr = R();
     let climate = 1 + normal() * P.climate.noise, climateTag = 'normal';
@@ -234,6 +309,16 @@ export function runSim(cfg) {
       patches.forEach(pt => { if (pt.coast) pt.stock.fish *= 0.45; });
       shocks.push('storm'); log({ y, t: 'shock', what: 'storm' });
     }
+    if (P.shocks.flood && R() < P.shocks.flood) {
+      patches.forEach(pt => { if (pt.arable && pt.fert >= 1) { pt.flooded = y; pt.fertNow = Math.min(1.1, pt.fertNow + 0.1); } });
+      shocks.push('river flood'); log({ y, t: 'shock', what: 'river flood' });
+    }
+    if (P.shocks.rinderpest && R() < P.shocks.rinderpest) {
+      societies.forEach(s => { for (const [k, c] of s.herds) s.herds.set(k, c * 0.6); });
+      shocks.push('cattle plague'); log({ y, t: 'shock', what: 'cattle plague' });
+    }
+    patches.forEach(pt => { if (pt.oasis) pt.water = !(climateTag === 'bad' && R() < 0.4); });
+    if (climateTag === 'bad' && W.waterRange) shocks.push('drought');
     series.shocks.push(shocks);
 
     // --- regrowth ---
@@ -242,20 +327,27 @@ export function runSim(cfg) {
       const s0 = Math.max(pt.stock[r], K * 0.02);
       pt.stock[r] = clamp(s0 + P.regrow[r] * s0 * (1 - s0 / K) * clamp(climate, 0.5, 1.3), 0, K);
     }
-    // mobile bands shift camp toward richer ground every few years
-    if (y % P.campMoveEvery === 0) for (const s of societies.filter(s => s.alive)) {
+    // mobile bands shift camp toward richer ground every few years; farmers stay put; desert bands follow water
+    for (const s of societies.filter(s => s.alive)) {
+      if (s.sedentary) continue;
+      const dry = W.waterRange && !waterNear(s.home, s);
+      if (y % P.campMoveEvery !== 0 && !dry) continue;
       const others = societies.filter(o => o.alive && o !== s);
       const terr = s.genome.foraging !== 'roam';
-      const richness = pt => patches.reduce((t, q) => dist(q, pt) <= 4 ? t + q.stock.plant + q.stock.game + q.stock.fish : t, 0);
+      const richness = pt => patches.reduce((t, q) => q.land && dist(q, pt) <= 4 ? t + q.stock.plant + q.stock.game + q.stock.fish : t, 0);
       let best = null, bv = -1;
       for (const pt of patches) {
-        if (dist(pt, s.home) > P.campMoveMax) continue;
-        if (terr && pt.owner !== s.id && pt.owner >= 0) continue;
+        if (!reach(s, pt) || dist(pt, s.home) > P.campMoveMax * (dry ? 2 : 1)) continue;
+        if (terr && !dry && pt.owner !== s.id && pt.owner >= 0) continue;
         if (others.some(o => dist(o.home, pt) < 5)) continue;
+        if (!waterNear(pt, s)) continue;
         const v = richness(pt);
         if (v > bv) { bv = v; best = pt; }
       }
-      if (best && (best.x !== s.home.x || best.y !== s.home.y) && bv > richness(s.home) * 1.1) s.home = { x: best.x, y: best.y };
+      if (best && (best.x !== s.home.x || best.y !== s.home.y) && (dry || bv > richness(s.home) * 1.1)) {
+        s.home = { x: best.x, y: best.y };
+        if (dry) log({ y, t: 'move', soc: s.id, why: 'water failed', to: [best.x, best.y] });
+      }
     }
     assignTerritory();
 
@@ -287,20 +379,29 @@ export function runSim(cfg) {
       s.cohesionPenalty = Math.max(0, s.cohesionPenalty * 0.85);
     }
 
-    // --- foraging ---
+    // --- foraging, farming, herding ---
     for (const s of live) {
       const g = s.genome, ms = members(s);
+      s.prod = { plant: 0, hunt: 0, fish: 0, farm: 0, herd: 0 }; s.tribute = 0;
       const owned = patches.filter(pt => pt.owner === s.id);
       let allowed;
-      if (g.foraging === 'roam') allowed = patches.filter(pt => dist(pt, s.home) < 12);
+      if (g.foraging === 'roam') allowed = patches.filter(pt => pt.land && dist(pt, s.home) < 12);
       else if (g.foraging === 'territorial') allowed = owned;
       else allowed = owned.filter(pt => (pt.i % 3) !== (y % 3));
-      if (!allowed.length) allowed = owned.length ? owned : patches;
+      allowed = allowed.filter(pt => reach(s, pt));
+      if (!allowed.length) allowed = owned.filter(pt => reach(s, pt));
+      if (!allowed.length) allowed = patches.filter(pt => reach(s, pt));
       // daily foraging range around camp; widen to the nearest dozen patches if the range is thin
       let ranged = allowed.filter(pt => dist(pt, s.home) <= P.forageRadius);
       if (ranged.length < 12) ranged = allowed.slice().sort((a, b) => dist(a, s.home) - dist(b, s.home)).slice(0, 12);
       allowed = ranged;
-      const coastAllowed = allowed.filter(pt => pt.coast);
+      const fishAllowed = allowed.filter(pt => pt.K.fish > 0);
+      const farming = has(s, 'cultivation');
+      const fieldPool = farming ? patches.filter(pt => pt.arable && reach(s, pt) && dist(pt, s.home) <= P.forageRadius &&
+        (pt.field ? pt.field.soc === s.id : pt.owner === s.id)) : [];
+      fieldPool.forEach(pt => { pt.farmers = 0; });
+      const herding = has(s, 'herding');
+      const untended = new Map(s.herds);
       const pool = g.sharing === 'household' ? 0 : g.sharing === 'kin' ? 0.4 : g.sharing === 'ruler' ? 0.8 : 1;
       const enforce = { gossip: 0.3, fines: 0.6, violence: 0.75, exile: 0.65 }[g.enforcement];
       const cohesion = cohesionOf(s);
@@ -314,7 +415,6 @@ export function runSim(cfg) {
         if (g.governance === 'totalitarian') effort += 0.12;
         if (p.status === 'slave') effort = P.slaveEffort;
         eff *= effort;
-        // choose activity
         const options = [];
         const opt = (act, rate, sk, ptList) => {
           if (!ptList.length) return;
@@ -331,33 +431,122 @@ export function runSim(cfg) {
         const hPen = nursing ? 0.5 : 1, gPen = nursing ? 0.85 : 1;
         opt('plant', P.rate.plant * plantMult(s) * gPen, p.skill.plant, allowed);
         opt('hunt', P.rate.game * huntMult(s) * hPen, p.skill.hunt, allowed);
-        opt('fish', P.rate.fish * fishMult(s) * gPen, p.skill.fish, coastAllowed);
+        opt('fish', P.rate.fish * fishMult(s) * gPen, p.skill.fish, fishAllowed);
+        if (fieldPool.length) {
+          // work a field you may use that still has room; clear new ground only when those are full
+          let best = null, bv = -1;
+          const fv = pt => P.rate.farm * farmMult(s) * pt.fertNow * Math.max(0.3, 1 - P.travelCost * dist(pt, s.home)); // settled yield
+          for (const pt of fieldPool) {
+            if (!pt.field || pt.farmers >= P.farmersPerField || !canUse(p, s, pt.field.key)) continue;
+            const v = fv(pt); if (v > bv) { bv = v; best = pt; }
+          }
+          if (!best || bv < P.rate.farm * 0.45) {
+            for (let k = 0; k < 6; k++) {
+              const pt = fieldPool[Math.floor(R() * fieldPool.length)];
+              if (pt.field) continue;
+              const v = fv(pt) * 0.9; if (v > bv) { bv = v; best = pt; }
+            }
+          }
+          if (best) options.push({ act: 'farm', v: bv * (0.4 + 0.6 * p.skill.farm) * gPen, pt: best });
+        }
+        if (herding && untended.size) {
+          let acc = 0;
+          for (const [k, c] of untended) if (c > 0.5 && canUse(p, s, k)) acc += c;
+          if (acc > 0.5) {
+            const t = Math.min(P.herdPerHerder, acc);
+            options.push({ act: 'herd', v: t * P.herdYield * herdMult(s) * (s.graze ?? 1) * (0.6 + 0.4 * p.skill.herd) * hPen, tend: t });
+          }
+        }
         let choice;
-        const sexDefault = () => {
-          if (p.sex === 'M') return options.filter(o => o.act !== 'plant').sort((a, b) => b.v - a.v)[0];
-          return options.filter(o => o.act !== 'hunt').sort((a, b) => b.v - a.v)[0];
-        };
+        const male = ['hunt', 'fish', 'herd', 'farm'], female = ['plant', 'fish', 'farm']; // men clear and plough, women gather and hoe
+        const sexDefault = () => options.filter(o => (p.sex === 'M' ? male : female).includes(o.act)).sort((a, b) => b.v - a.v)[0];
         const bestAny = () => options.slice().sort((a, b) => b.v - a.v)[0];
-        if (g.labour === 'bySex') choice = sexDefault();
+        if (g.labour === 'bySex') choice = sexDefault() || bestAny();
         else if (g.labour === 'bySkill') choice = bestAny();
-        else choice = R() < 0.5 ? sexDefault() : bestAny();
+        else choice = (R() < 0.5 ? sexDefault() : bestAny()) || bestAny();
         if (!choice) continue;
-        const res = choice.act === 'hunt' ? 'game' : choice.act;
-        let got = choice.v * eff * climate;
-        if (choice.act === 'hunt') got *= Math.max(0, 1 + normal() * P.gameVariance);
-        else got *= Math.max(0, 1 + normal() * 0.15);
-        got = Math.min(got, choice.pt.stock[res] * 0.6);
-        choice.pt.stock[res] -= got;
-        if (!has(s, 'smoking')) got *= 1 - P.gluttLoss;
-        p.harvest = got; p.activity = choice.act;
-        // trespass on territorial neighbours
-        if (choice.pt.owner !== s.id && choice.pt.owner >= 0) {
-          const o = societies[choice.pt.owner];
-          if (o.genome.foraging !== 'roam') o.grievance[s.id] = (o.grievance[s.id] || 0) + 0.004;
+        let got = choice.v * eff;
+        if (choice.act === 'farm') {
+          const pt = choice.pt;
+          got *= Math.pow(clamp(climate, 0.2, 1.5), has(s, 'irrigation') ? 0.6 : 1.4) * Math.max(0, 1 + normal() * 0.12) * (pt.flooded === y ? 0.2 : 1);
+          if (!pt.field) {
+            got *= 0.5; // the first year goes into clearing
+            pt.field = { soc: s.id, key: ownerKey(p, s) };
+            if (s.firstField == null) { s.firstField = y; log({ y, t: 'farming', soc: s.id }); }
+          }
+          pt.farmers++; pt.lastFarmed = y;
+          pt.fertNow = Math.max(pt.fert * 0.4, pt.fertNow - P.fieldDepletion);
+        } else if (choice.act === 'herd') {
+          got *= Math.pow(clamp(climate, 0.3, 1.5), 0.5) * Math.max(0, 1 + normal() * 0.12);
+          let t = choice.tend;
+          for (const [k, c] of untended) { if (t <= 0) break; if (c > 0.5 && canUse(p, s, k)) { const d = Math.min(c, t); untended.set(k, c - d); t -= d; } }
+        } else {
+          const res = choice.act === 'hunt' ? 'game' : choice.act;
+          got *= climate;
+          if (choice.act === 'hunt') got *= Math.max(0, 1 + normal() * P.gameVariance);
+          else got *= Math.max(0, 1 + normal() * 0.15);
+          got = Math.min(got, choice.pt.stock[res] * 0.6);
+          choice.pt.stock[res] -= got;
+          if (!has(s, 'smoking')) got *= 1 - P.gluttLoss;
+          if (choice.pt.owner !== s.id && choice.pt.owner >= 0) {
+            const o = societies[choice.pt.owner];
+            if (o.genome.foraging !== 'roam') o.grievance[s.id] = (o.grievance[s.id] || 0) + 0.004;
+          }
+        }
+        if (g.property === 'ruler' && (choice.act === 'farm' || choice.act === 'herd') && p.id !== s.leader) { const tr = got * 0.25; s.tribute += tr; got -= tr; }
+        p.harvest = got; p.activity = choice.act; s.prod[choice.act] += got;
+      }
+      if (s.tradeBonus) ms.forEach(p => { if (p.harvest) p.harvest *= 1 + s.tradeBonus; });
+      // herds graze, breed and die
+      const total = [...s.herds.values()].reduce((a, b) => a + b, 0);
+      if (total > 0.5) {
+        const need = total * P.herdGraze;
+        const pasture = patches.filter(pt => reach(s, pt) && !pt.field && dist(pt, s.home) <= P.forageRadius + 2);
+        const avail = pasture.reduce((t, pt) => t + pt.stock.plant * 0.5, 0);
+        const take = Math.min(need, avail);
+        if (avail > 0) pasture.forEach(pt => { pt.stock.plant -= pt.stock.plant * 0.5 * (take / avail); });
+        const graze = need ? take / need : 1;
+        s.graze = graze;
+        for (const [k, c] of s.herds) {
+          const f = c ? 1 - (untended.get(k) || 0) / c : 0;
+          const nc = c * (1 + P.herdGrowth * graze * (0.4 + 0.6 * f) - (1 - graze) * 0.3 - (1 - f) * 0.08 - (climateTag === 'bad' ? 0.12 : 0));
+          if (nc < 0.5) s.herds.delete(k); else s.herds.set(k, nc);
         }
       }
-      // trade bonus applies to total harvest
-      if (s.tradeBonus) ms.forEach(p => { if (p.harvest) p.harvest *= 1 + s.tradeBonus; });
+      const tot = Object.values(s.prod).reduce((a, b) => a + b, 0) || 1;
+      s.farmShare = s.prod.farm / tot; s.herdShare = s.prod.herd / tot;
+      const wasSed = s.sedentary;
+      s.sedentary = s.sedentary ? s.farmShare > 0.12 : s.farmShare > 0.45; // villages abandon their fields only when farming has all but failed
+      if (s.sedentary !== wasSed) log({ y, t: 'sedentary', soc: s.id, on: s.sedentary, share: +s.farmShare.toFixed(2) });
+    }
+    // fallow fields recover; long-abandoned fields go back to the wild
+    for (const pt of patches) {
+      if (!pt.arable) continue;
+      if (!pt.farmers || pt.lastFarmed !== y) pt.fertNow = Math.min(pt.fert, pt.fertNow + P.fieldRecovery * (pt.fert - pt.fertNow + 0.05));
+      if (pt.field && y - pt.lastFarmed > 15) pt.field = null;
+    }
+    // wealth: fields and herds per person, ranked within each society (feeds status and polygyny)
+    for (const s of live) {
+      const ms = members(s);
+      const kw = new Map();
+      for (const [k, c] of s.herds) kw.set(k, (kw.get(k) || 0) + c * P.herdYield);
+      for (const pt of patches) if (pt.field && pt.field.soc === s.id) kw.set(pt.field.key, (kw.get(pt.field.key) || 0) + P.rate.farm * pt.fertNow);
+      const ruler = kw.get('ruler') || 0, common = kw.get('all') || 0;
+      const keyOfP = new Map(ms.map(p => [p.id, ownerKey(p, s)]));
+      const size = new Map(); keyOfP.forEach(k => size.set(k, (size.get(k) || 0) + 1));
+      const L = byId.get(s.leader);
+      const lk = L ? keyOfP.get(L.id) : null;
+      ms.forEach(p => {
+        const k = keyOfP.get(p.id);
+        let w = (k === 'all' || k === 'ruler') ? 0 : (kw.get(k) || 0) / (size.get(k) || 1);
+        w += common / Math.max(1, ms.length);
+        if (ruler && k === lk) w += ruler / (size.get(lk) || 1);
+        p.wealth = w;
+      });
+      const sorted = ms.slice().sort((a, b) => a.wealth - b.wealth);
+      sorted.forEach((p, i) => { p.wealthRank = sorted.length > 1 ? i / (sorted.length - 1) : 0; });
+      const sd = ensureSeries(s);
+      sd.wealthGini[y] = +gini(ms.map(p => p.wealth)).toFixed(3);
     }
 
     // --- sharing & consumption ---
@@ -396,6 +585,11 @@ export function runSim(cfg) {
           if (ws.length > 1) { ws.forEach(w => groups.get(keyOf(w)).food += p.harvest / ws.length); continue; }
         }
         groups.get(keyOf(p)).food += p.harvest;
+      }
+      if (s.tribute) {
+        const L = byId.get(s.leader);
+        const gk = L && L.alive && L.soc === s.id ? keyOf(L) : groups.keys().next().value;
+        if (gk !== undefined && groups.has(gk)) groups.get(gk).food += s.tribute;
       }
       let totFood = 0, totNeed = 0;
       const ratios = [];
@@ -489,7 +683,7 @@ export function runSim(cfg) {
         const slaveM = p.status === 'slave' ? 1.25 : 1;
         const hungerM = 1 + 2.5 * Math.max(0, 1 - p.foodRatio); // malnutrition-infection synergy
         hInf *= hungerM;
-        const hInfect = P.bgInfection * (has(s, 'herbal') ? 0.6 : 1) * (has(s, 'hygiene') ? 0.8 : 1) * slaveM * hungerM;
+        const hInfect = P.bgInfection * (has(s, 'herbal') ? 0.6 : 1) * (has(s, 'hygiene') ? 0.8 : 1) * slaveM * hungerM * (1 + 0.4 * s.farmShare + 0.3 * s.herdShare);
         const hunter = p.activity === 'hunt';
         const hAcc = P.bgAccident * (hunter ? 1.6 : 1) * (has(s, 'boneSetting') ? 0.7 : 1) * (has(s, 'woundCare') ? 0.8 : 1);
         const hOther = P.bgOther * slaveM * hungerM;
@@ -511,7 +705,7 @@ export function runSim(cfg) {
         }
       }
       // epidemics
-      const epiP = P.shocks.epidemic * Math.sqrt(Math.max(1, ms.length) / 100) + (s.importedDisease ? 0.35 * (has(s, 'quarantine') ? 0.5 : 1) : 0);
+      const epiP = P.shocks.epidemic * Math.sqrt(Math.max(1, ms.length) / 100) * (1 + 1.5 * s.farmShare) + (s.importedDisease ? 0.35 * (has(s, 'quarantine') ? 0.5 : 1) : 0);
       s.importedDisease = false;
       if (R() < epiP) {
         s.epidemicThisYear = true;
@@ -544,16 +738,16 @@ export function runSim(cfg) {
       if (g.enforcement === 'violence') low.forEach(p => { if (R() < 0.01) kill(p, y, 'punishment', ['free-rider']); });
       if (g.enforcement === 'exile') low.forEach(p => {
         if (R() < 0.03) {
-          const dest = societies.filter(o => o.alive && o.id !== s.id && o.genome.outgroup !== 'xenophobic');
-          if (dest.length && R() < 0.6) { const d = pick(dest); p.soc = d.id; log({ y, t: 'exile', soc: s.id, to: d.id, who: p.id }); }
+          const dest = societies.filter(o => o.alive && o.id !== s.id && o.genome.outgroup !== 'xenophobic' && inContact(s, o));
+          if (dest.length && R() < 0.6) { const d = pick(dest); setSoc(p, d.id); log({ y, t: 'exile', soc: s.id, to: d.id, who: p.id }); }
           else kill(p, y, 'accident', ['exiled']);
         }
       });
       // totalitarian defection
       if (g.governance === 'totalitarian') ms.filter(p => p.alive && p.status === 'free' && age(p, y) >= 16 && age(p, y) < 50).forEach(p => {
         if (R() < P.defection * (1 - cohesionOf(s))) {
-          const dest = societies.filter(o => o.alive && o.id !== s.id && o.genome.outgroup !== 'xenophobic');
-          if (dest.length) { const d = pick(dest); p.soc = d.id; aliveSpouses(p).forEach(() => {}); log({ y, t: 'defect', soc: s.id, to: d.id, who: p.id }); }
+          const dest = societies.filter(o => o.alive && o.id !== s.id && o.genome.outgroup !== 'xenophobic' && inContact(s, o));
+          if (dest.length) { const d = pick(dest); setSoc(p, d.id); aliveSpouses(p).forEach(() => {}); log({ y, t: 'defect', soc: s.id, to: d.id, who: p.id }); }
         }
       });
       // slaves: escape, revolt, freeing, adoption of captives
@@ -570,7 +764,7 @@ export function runSim(cfg) {
       slaves.filter(p => p.alive).forEach(sl => {
         if (R() < P.slaveEscape) {
           const home = societies[sl.origin];
-          if (home && home.alive && home.id !== s.id) { sl.soc = home.id; sl.status = 'free'; log({ y, t: 'escape', soc: s.id, to: home.id, who: sl.id }); }
+          if (home && home.alive && home.id !== s.id && inContact(s, home)) { setSoc(sl, home.id); sl.status = 'free'; log({ y, t: 'escape', soc: s.id, to: home.id, who: sl.id }); }
         }
       });
       ms.filter(p => p.alive && p.status === 'captive' && p.freedYear !== null && y >= p.freedYear).forEach(p => { p.status = 'free'; });
@@ -608,7 +802,7 @@ export function runSim(cfg) {
         if (aliveSpouses(w).length >= maxW) continue;
         if (R() > pMarry) continue;
         // intermarriage
-        const others = societies.filter(o => o.alive && o.id !== s.id && o.genome.outgroup !== 'xenophobic' && g.outgroup !== 'xenophobic' &&
+        const others = societies.filter(o => o.alive && o.id !== s.id && o.genome.outgroup !== 'xenophobic' && g.outgroup !== 'xenophobic' && inContact(s, o) &&
           (s.grievance[o.id] || 0) < 1 && (o.grievance[s.id] || 0) < 1);
         let pool = menAll, foreign = null;
         if (others.length && R() < (g.outgroup === 'open' ? 0.08 : 0.03)) {
@@ -629,8 +823,8 @@ export function runSim(cfg) {
           const mover = res === 'matrilocal' ? m : w;
           const to = res === 'matrilocal' ? s.id : foreign.id;
           const from = mover.soc;
-          mover.soc = to;
-          if (mover === w) w.kids.forEach(id => { const k = byId.get(id); if (k && k.alive && age(k, y) < 12) k.soc = to; });
+          setSoc(mover, to);
+          if (mover === w) w.kids.forEach(id => { const k = byId.get(id); if (k && k.alive && age(k, y) < 12) setSoc(k, to); });
           log({ y, t: 'intermarry', soc: from, to, who: mover.id });
         }
       }
@@ -648,7 +842,7 @@ export function runSim(cfg) {
         if (w.sex !== 'F' || !w.alive) continue;
         const a = age(w, y);
         if (a < P.femaleFertileFrom || a > P.femaleFertileTo) continue;
-        if (y - w.lastBirth < P.nursingYears) continue;
+        if (y - w.lastBirth < (s.sedentary ? P.nursingYearsSedentary : P.nursingYears)) continue;
         let father;
         if (g.marriage === 'open') { if (!adultMenOpen.length) continue; const cands = adultMenOpen.filter(m => !isRelated(w, m)); if (!cands.length) continue;
           const sample = [pick(cands), pick(cands), pick(cands)]; father = sample.sort((x, z) => status(z, s) - status(x, s))[0]; }
@@ -664,7 +858,7 @@ export function runSim(cfg) {
         const child = makePerson({ sex, born: y, mother: w.id, father: father.id, soc: w.soc, status: st,
           matriline: w.matriline, patriline: father.patriline, ancestry: anc,
           coop: (w.coop + father.coop) / 2 + normal() * 0.1, aggr: (w.aggr + father.aggr) / 2 + normal() * 0.1,
-          skill: { plant: inherit('plant'), hunt: inherit('hunt'), fish: inherit('fish'), fight: inherit('fight'), heal: inherit('heal'), craft: inherit('craft') } });
+          skill: Object.fromEntries(DOMAINS.map(d => [d, inherit(d)])) });
         w.kids.push(child.id); father.kids.push(child.id);
         w.lastBirth = y;
         sd.births[y] = (sd.births[y] || 0) + 1;
@@ -688,7 +882,7 @@ export function runSim(cfg) {
     const raidedThisYear = new Set();
     for (const A of liveNow) {
       for (const B of liveNow) {
-        if (A === B || !A.alive || !B.alive) continue;
+        if (A === B || !A.alive || !B.alive || !canRaid(A, B)) continue;
         const gA = A.genome;
         const fa = fightersOf(A, y), fb = fightersOf(B, y);
         if (fa.length < 2) continue;
@@ -701,6 +895,8 @@ export function runSim(cfg) {
           meanAggr * 0.3 - (A.trust[B.id] || 0) * 0.5;
         if (L && (gA.governance === 'chief' || gA.governance === 'totalitarian')) pressure += (L.aggr - 0.5) * 0.8;
         if (gA.governance === 'totalitarian') pressure += 0.3;
+        const herdPer = x => [...x.herds.values()].reduce((a, b) => a + b, 0) / Math.max(1, members(x).length);
+        if (herdPer(B) > 1 && herdPer(B) > herdPer(A) * 1.2) pressure += 0.35; // livestock envy
         let thr = P.raidThreshold;
         if (gA.governance === 'democracy') { const prev = A.lastPressure[B.id] ?? pressure; A.lastPressure[B.id] = pressure; pressure = prev; thr += 0.15; }
         let pr = P.raidBase * sigmoid(P.raidSlope * (pressure - thr));
@@ -722,13 +918,21 @@ export function runSim(cfg) {
         let dA = 0, dB = 0;
         party.forEach(p => { p.raided = true; if (R() < (win ? P.casualtyWinner : P.casualtyLoser) * wcA) { kill(p, y, 'raid', ['raiding ' + B.name], { by: B.id }); dA++; } });
         defenders.forEach(p => { if (R() < (win ? P.casualtyLoser : P.casualtyWinner) * wcB) { kill(p, y, 'raid', ['defending vs ' + A.name], { by: A.id }); dB++; } });
-        let taken = 0, stolen = 0;
+        let taken = 0, stolen = 0, rustledThis = 0;
         if (win) {
           members(B).forEach(p => { if (R() < 0.03) { kill(p, y, 'raid', ['camp raided by ' + A.name], { by: A.id }); dB++; } });
           for (const [k, v] of B.stores) { stolen += v * 0.3; B.stores.set(k, v * 0.7); }
           const loot = 'all';
           const lk = A.genome.sharing === 'household' || A.genome.sharing === 'kin' ? [...A.stores.keys()][0] || loot : loot;
           A.stores.set(lk, (A.stores.get(lk) || 0) + stolen);
+          let rustled = 0;
+          for (const [k, c] of B.herds) { const t = c * 0.3; B.herds.set(k, c - t); rustled += t; }
+          if (rustled > 0.5) {
+            const keys = party.filter(p => p.alive).map(p => ownerKey(p, A));
+            const ks = keys.length ? keys : [ownerKey(party[0], A)];
+            ks.forEach(k => A.herds.set(k, (A.herds.get(k) || 0) + rustled / ks.length));
+          }
+          rustledThis = Math.round(rustled);
           const cands = members(B).filter(p => { const a = age(p, y); return (p.sex === 'F' && a >= 13 && a <= 35) || (a >= 3 && a <= 12); });
           const nCap = Math.min(cands.length, Math.round(party.length * 0.35 * R() + 0.5));
           for (let k = 0; k < nCap; k++) {
@@ -737,7 +941,7 @@ export function runSim(cfg) {
             if (pol === 'kill') { kill(c, y, 'killed captive', ['taken by ' + A.name], { by: A.id }); continue; }
             if (pol === 'ransom') { stolen += needOf(c, y) * 0.5; continue; }
             c.spouses.forEach(id => { const h = byId.get(id); if (h) h.spouses = h.spouses.filter(z => z !== c.id); });
-            c.spouses = []; c.soc = A.id; c.origin = B.id;
+            c.spouses = []; setSoc(c, A.id); c.origin = B.id;
             if (pol === 'slave') c.status = 'slave'; else { c.status = 'captive'; c.freedYear = y + 2; }
             taken++;
           }
@@ -750,7 +954,7 @@ export function runSim(cfg) {
         sdA.raidsMade[y] = (sdA.raidsMade[y] || 0) + 1; sdB.raidsSuffered[y] = (sdB.raidsSuffered[y] || 0) + 1;
         sdA.warDeaths[y] = (sdA.warDeaths[y] || 0) + dA; sdB.warDeaths[y] = (sdB.warDeaths[y] || 0) + dB;
         raidedThisYear.add(A.id); raidedThisYear.add(B.id);
-        log({ y, t: 'raid', soc: A.id, to: B.id, win, party: party.length, def: defenders.length, dA, dB, taken, stolen: Math.round(stolen),
+        log({ y, t: 'raid', soc: A.id, to: B.id, win, party: party.length, def: defenders.length, dA, dB, taken, stolen: Math.round(stolen), herds: rustledThis,
           f: [A.meanRatio < 0.85 ? 'hunger' : null, (A.grievance[B.id] || 0) > 1 ? 'grievance' : null, (A.unpairedFrac || 0) > 0.25 ? 'unpaired men' : null].filter(Boolean) });
         // conquest
         const popA = members(A).length, popB = members(B).length;
@@ -765,7 +969,7 @@ export function runSim(cfg) {
     for (const [A, B] of pairs) {
       if (!A.alive || !B.alive) continue;
       const ok = s => s.genome.trade !== 'none' && s.genome.outgroup !== 'xenophobic' || s.genome.trade === 'ruler';
-      if (!ok(A) || !ok(B)) { A.tradeLink[B.id] = 0; B.tradeLink[A.id] = 0; continue; }
+      if (!ok(A) || !ok(B) || !inContact(A, B)) { A.tradeLink[B.id] = 0; B.tradeLink[A.id] = 0; continue; }
       if ((A.grievance[B.id] || 0) > 0.8 || (B.grievance[A.id] || 0) > 0.8) continue;
       const migrants = members(A).filter(p => p.origin === B.id).length + members(B).filter(p => p.origin === A.id).length;
       if ((A.genome.trade === 'kin' || B.genome.trade === 'kin') && migrants < 2) continue;
@@ -783,7 +987,7 @@ export function runSim(cfg) {
         if (moved > 0) log({ y, t: 'trade', soc: rich.id, to: poor.id, kcal: Math.round(moved), what: 'famine relief' });
       }
       for (const [X, Y] of [[A, B], [B, A]]) {
-        for (const t of Y.techs) if (!X.techs.has(t) && TECHS[t].req.every(r => X.techs.has(r)) && R() < P.diffuseTrade * link) {
+        for (const t of Y.techs) if (!X.techs.has(t) && reqOf(t).every(r => X.techs.has(r)) && R() < P.diffuseTrade * link) {
           X.techs.add(t); log({ y, t: 'tech', soc: X.id, tech: t, via: 'trade with ' + Y.name });
         }
         if (Y.epidemicThisYear && R() < 0.3 * (has(X, 'quarantine') ? 0.5 : 1)) X.importedDisease = true;
@@ -825,14 +1029,16 @@ export function runSim(cfg) {
       const migFrac = ms.length ? ms.filter(p => p.origin !== s.id).length / ms.length : 0;
       for (const [t, spec] of Object.entries(TECHS)) {
         if (s.techs.has(t)) {
-          if (L[spec.domain] < P.techLossThreshold && R() < 0.08) {
+          const kd = spec.keep || spec.domain; // know-how is kept alive by whoever practises it
+          if (L[kd] < P.techLossThreshold && R() < 0.08) {
             s.techs.delete(t);
-            log({ y, t: 'techLoss', soc: s.id, tech: t, f: [`${spec.domain} skill ${L[spec.domain].toFixed(2)}`] });
+            log({ y, t: 'techLoss', soc: s.id, tech: t, f: [`${kd} skill ${L[kd].toFixed(2)}`] });
           }
           continue;
         }
-        if (!spec.req.every(r => s.techs.has(r))) continue;
-        const pI = P.inventBase * (0.3 + L[spec.domain]) * Math.sqrt(Math.max(1, ms.length) / 50) * innov * (1 + 0.5 * migFrac);
+        if (!reqOf(t).every(r => s.techs.has(r))) continue;
+        if (spec.needs && !envHas[spec.needs]) continue;
+        const pI = P.inventBase * (spec.rarity ?? 1) * (0.3 + L[spec.domain]) * Math.sqrt(Math.max(1, ms.length) / 50) * innov * (1 + 0.5 * migFrac);
         if (R() < pI) {
           s.techs.add(t);
           const inv = ms.slice().sort((a, b) => b.skill[spec.domain === 'fight' ? 'fight' : spec.domain] - a.skill[spec.domain])[0];
@@ -901,7 +1107,7 @@ export function runSim(cfg) {
       if (!ms.length) { s.alive = false; s.ended = y; s.endReason = 'extinct'; log({ y, t: 'extinct', soc: s.id }); continue; }
       const canBreed = adults.some(p => p.sex === 'F' && age(p, y) <= 44) && adults.some(p => p.sex === 'M');
       if (ms.length < 8 || (!canBreed && adults.length < 12)) {
-        const hosts = societies.filter(o => o.alive && o !== s && o.genome.outgroup !== 'xenophobic');
+        const hosts = societies.filter(o => o.alive && o !== s && o.genome.outgroup !== 'xenophobic' && inContact(s, o));
         if (hosts.length) absorb(s, pick(hosts), y, 'merger');
       }
     }
@@ -917,12 +1123,17 @@ export function runSim(cfg) {
       sd.warDeaths[y] = sd.warDeaths[y] || 0;
       // polygyny rate: share of married women in polygynous unions
       const wives = ms.filter(p => p.sex === 'F' && aliveSpouses(p).length);
+      sd.herds[y] = Math.round([...s.herds.values()].reduce((a, b) => a + b, 0));
+      sd.fields[y] = s.alive ? patches.filter(pt => pt.field && pt.field.soc === s.id).length : 0;
+      sd.sedentary[y] = s.sedentary ? 1 : 0;
+      for (const a of ['plant', 'hunt', 'fish', 'farm', 'herd']) sd.prod[a][y] = s.alive ? Math.round((s.prod[a] || 0) / 1e5) / 10 : 0;
       sd.polygyny[y] = wives.length ? +(wives.filter(w => aliveSpouses(byId.get(aliveSpouses(w)[0])).length > 1).length / wives.length).toFixed(3) : 0;
       if (s.id < nFounders) sd.ancestry[y] = +(people.filter(p => p.alive).reduce((a, p) => a + p.ancestry[s.id], 0) / total).toFixed(3);
     }
     if (!societies.some(s => s.alive)) { log({ y, t: 'island empty' }); break; }
     // keep only the living in the hot list (genealogy stays in byId)
     for (let i = people.length - 1; i >= 0; i--) if (!people[i].alive) people.splice(i, 1);
+    popVer++;
   }
 
   // ---------- fission & absorption ----------
@@ -938,7 +1149,12 @@ export function runSim(cfg) {
     let genome = cloneGenome(s.genome);
     if (!P.freezeGenomes) { const k = pick(GENE_KEYS.filter(k => k !== 'fission')); genome = mutateGene(genome, k, R); }
     let best = null, bd = -1;
-    for (const pt of patches) { const d = Math.min(...societies.filter(o => o.alive).map(o => dist(pt, o.home))); if (d > bd) { bd = d; best = pt; } }
+    for (const pt of patches) {
+      if (!reach(s, pt) || !waterNear(pt, s)) continue;
+      const d = Math.min(...societies.filter(o => o.alive).map(o => dist(pt, o.home) + (W.islands && pt.isle !== patchAt(o.home.x, o.home.y).isle ? 6 : 0)));
+      if (d > bd) { bd = d; best = pt; }
+    }
+    if (!best || bd < 4) return;
     const root = s.root || s.name;
     const nth = societies.filter(o => (o.root || o.name) === root).length + 1;
     const childSoc = makeSociety(genome, `${root} ${roman(nth)}`, { x: best.x, y: best.y }, s.id);
@@ -946,13 +1162,20 @@ export function runSim(cfg) {
     childSoc.founded = y;
     ensureSeries(childSoc);
     s.techs.forEach(t => childSoc.techs.add(t));
-    leaving.forEach(p => { p.soc = childSoc.id; });
+    leaving.forEach(p => { setSoc(p, childSoc.id); });
     // spouses across the split follow residence
-    leaving.forEach(p => aliveSpouses(p).forEach(id => { const q = byId.get(id); if (q.soc === s.id && (s.genome.residence === 'matrilocal' ? q.sex === 'M' : q.sex === 'F')) q.soc = childSoc.id; }));
+    leaving.forEach(p => aliveSpouses(p).forEach(id => { const q = byId.get(id); if (q.soc === s.id && (s.genome.residence === 'matrilocal' ? q.sex === 'M' : q.sex === 'F')) setSoc(q, childSoc.id); }));
     s.trust[childSoc.id] = childSoc.trust[s.id] = 0.5;
     s.grievance[childSoc.id] = childSoc.grievance[s.id] = 0.3;
-    // split stores
+    // split stores; herds go with the people who own them; fields of leavers are abandoned
     for (const [k, v] of s.stores) { s.stores.set(k, v * 0.5); childSoc.stores.set(k, v * 0.5); }
+    const leftKeys = new Set(leaving.map(p => ownerKey(p, s)));
+    const share = leaving.length / Math.max(1, leaving.length + members(s).length);
+    for (const [k, c] of [...s.herds]) {
+      if (k === 'all' || k === 'ruler') { s.herds.set(k, c * (1 - share)); childSoc.herds.set(k, c * share); }
+      else if (leftKeys.has(k)) { s.herds.delete(k); childSoc.herds.set(k, c); }
+    }
+    patches.forEach(pt => { if (pt.field && pt.field.soc === s.id && leftKeys.has(pt.field.key) && pt.field.key !== 'all' && pt.field.key !== 'ruler') pt.field = null; });
     log({ y, t: 'fission', soc: s.id, to: childSoc.id, size: members(childSoc).length, genes: Object.keys(genome).filter(k => genome[k] !== s.genome[k]) });
     function shuffle(a) { const b = a.slice(); for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(R() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; }
   }
@@ -962,11 +1185,15 @@ export function runSim(cfg) {
     let killed = 0;
     for (const p of ms) {
       if (how === 'conquest' && p.sex === 'M' && age(p, y) >= 15 && R() < 0.4) { kill(p, y, 'raid', ['conquered by ' + A.name], { by: A.id }); killed++; continue; }
-      p.soc = A.id; p.origin = B.id;
+      setSoc(p, A.id); p.origin = B.id;
       if (how === 'conquest' && pol === 'slave') p.status = 'slave';
       else if (how === 'conquest') { p.status = 'captive'; p.freedYear = y + 2; }
     }
     for (const [k, v] of B.stores) A.stores.set(k, (A.stores.get(k) || 0) + v);
+    const ak = A.genome.property === 'ruler' ? 'ruler' : 'all';
+    for (const [, c] of B.herds) A.herds.set(ak, (A.herds.get(ak) || 0) + c);
+    B.herds.clear();
+    patches.forEach(pt => { if (pt.field && pt.field.soc === B.id) pt.field = { soc: A.id, key: ak }; });
     B.techs.forEach(t => { if (!A.techs.has(t) && R() < 0.5) { A.techs.add(t); log({ y, t: 'tech', soc: A.id, tech: t, via: 'absorbed ' + B.name }); } });
     B.alive = false; B.ended = y; B.endReason = how === 'conquest' ? 'conquered by ' + A.name : 'merged into ' + A.name;
     log({ y, t: how, soc: B.id, to: A.id, people: ms.length - killed, killed });
@@ -987,19 +1214,22 @@ export function runSim(cfg) {
       ancestryShare: s.id < nFounders ? sd.ancestry[lastY] : null,
       warShareMaleDeaths: deathsMaleAdult.length ? +(warM / deathsMaleAdult.length).toFixed(3) : 0,
       techs: [...s.techs], genome: s.genome,
+      herdsEnd: sd.herds[lastY] || 0, fieldsEnd: sd.fields[lastY] || 0,
+      foodMix: (() => { const m = {}; let t = 0; for (const a of ['plant', 'hunt', 'fish', 'farm', 'herd']) { let v = 0; for (let k = Math.max(0, lastY - 49); k <= lastY; k++) v += sd.prod[a][k] || 0; m[a] = v; t += v; } for (const a in m) m[a] = t ? +(m[a] / t).toFixed(3) : 0; return m; })(),
       geneChanges: events.filter(e => e.t === 'gene' && e.soc === s.id).length,
     };
   });
   const digest = makeDigest(events, sseries, series, societies);
   return {
-    seed: cfg.seed, years: lastY + 1, params: P,
+    version: MODEL_VERSION, seed: cfg.seed, years: lastY + 1, params: P, env: envKey, envName: ENVIRONMENTS[envKey].name, grid: G,
+    map: patches.map(pt => pt.land ? (pt.water ? 3 : pt.arable && pt.fert >= 1 ? 2 : pt.grass ? 4 : 1) : 0),
     societies: societies.map(s => ({ id: s.id, name: s.name, color: s.color, parent: s.parent, founded: s.founded })),
     series, sseries, events, summary, digest,
   };
 }
 
 function roman(n) {
-  const m = [[10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']]; let out = '';
+  const m = [[1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'], [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']]; let out = '';
   for (const [v, r] of m) while (n >= v) { out += r; n -= v; }
   return out;
 }

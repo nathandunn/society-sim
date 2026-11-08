@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict';
 import { runSim } from '../src/engine.js';
 import { PRESETS } from '../src/genome.js';
-import { CAUSES } from '../src/params.js';
+import { CAUSES, MODEL_VERSION } from '../src/params.js';
+import { readFileSync } from 'node:fs';
 
 let pass = 0;
 const t = (name, fn) => { fn(); pass++; console.log('ok', name); };
@@ -60,6 +61,20 @@ t('island-level summaries add up', () => {
   const r = runSim(cfg(5));
   const share = r.summary.reduce((a, s) => a + s.islandShare, 0);
   assert.ok(share === 0 || Math.abs(share - 1) < 0.01, 'share ' + share);
+});
+
+t('model version matches package.json', () => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(MODEL_VERSION, pkg.version);
+  assert.equal(runSim(cfg(1)).version, pkg.version);
+});
+
+t('every world runs 150 years with somebody alive somewhere', () => {
+  for (const env of ['forest', 'farmland', 'desert', 'islands']) {
+    let alive = 0;
+    for (let seed = 1; seed <= 3; seed++) alive += runSim({ genomes: [PRESETS['Democratic egalitarian'], PRESETS['Patriarchal harem']], seed, params: { env, years: 150 } }).summary.some(s => s.alive) ? 1 : 0;
+    assert.ok(alive >= 2, env + ' died out in ' + (3 - alive) + ' of 3 seeds');
+  }
 });
 
 console.log(`${pass} tests passed`);
