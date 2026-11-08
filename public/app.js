@@ -255,7 +255,7 @@ function renderDigest() {
   $('#digest').querySelectorAll('li[data-y]').forEach(li => li.onclick = () => { pickYear = +li.dataset.y; $('#fYear').value = pickYear; $('#fWin').value = 3; $('#fSoc').value = ''; renderLog(); renderCharts(); });
 }
 
-const TYPE_NAMES = { farming: 'First fields', sedentary: 'Settling down', move: 'Camp moves', inherit: 'Inheritances', death: 'Deaths', birth: 'Births', raid: 'Raids', gene: 'Rule changes', tech: 'Tech gained', techLoss: 'Tech lost', epidemic: 'Epidemics', shock: 'Shocks',
+const TYPE_NAMES = { relief: 'Chief hands out food', farming: 'First fields', sedentary: 'Settling down', move: 'Camp moves', inherit: 'Inheritances', death: 'Deaths', birth: 'Births', raid: 'Raids', gene: 'Rule changes', tech: 'Tech gained', techLoss: 'Tech lost', epidemic: 'Epidemics', shock: 'Shocks',
   fission: 'Fissions', conquest: 'Conquests', merger: 'Mergers', intermarry: 'Intermarriages', trade: 'Trade', succession: 'Succession crises', leader: 'New leaders',
   revolt: 'Revolts', escape: 'Escapes', defect: 'Defections', exile: 'Exiles', extinct: 'Extinctions' };
 function renderFilters() {
@@ -301,6 +301,7 @@ function describe(e) {
     case 'techLoss': return `${n(e.soc)}: <b>lost ${TECHS[e.tech].name}</b> — the experts are gone${f}`;
     case 'epidemic': return `${n(e.soc)}: <b>${esc(e.name || 'epidemic')}</b> ${esc(e.via || '')} — ${e.infected ?? '?'} sick, <b>${e.deaths} dead</b> <span class="f">(${e.susceptible != null ? pct(e.susceptible) + ' had no immunity, ' : ''}spread rate ${e.R ?? '?'})</span>`;
     case 'shock': return `World: <b>${e.what}</b>`;
+    case 'relief': return `${n(e.soc)}: <b>the chief opened his storehouse</b>, ${Math.round(e.kcal / 1e6)}M kcal to the hungry`;
     case 'farming': return `${n(e.soc)}: <b>first fields cleared</b>`;
     case 'sedentary': return `${n(e.soc)}: <b>${e.on ? 'settled into villages' : 'went back to moving camp'}</b> <span class="f">(farming ${pct(e.share)} of food)</span>`;
     case 'move': return `${n(e.soc)}: camp moved — ${esc(e.why)}`;

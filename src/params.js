@@ -3,7 +3,7 @@
 // TFR ~ 5-6, modal adult death ~ 70. Every value is tunable from the UI.
 
 // Model version: bump with package.json (tests check they match). Stamped into every result.
-export const MODEL_VERSION = '0.3.0';
+export const MODEL_VERSION = '0.3.1';
 
 export const DEFAULT_PARAMS = {
   years: 500,
@@ -68,7 +68,9 @@ export const DEFAULT_PARAMS = {
 
   // --- Social ---
   freeRiderLoss: 0.18,      // max effort lost under pooled sharing
-  eliteCut: 0.12,
+  eliteCut: 0.12,           // tribute: share of the common pot that goes to the chief's storehouse
+  eliteEat: 1.25,           // the chief's household eats this multiple of its need from the store
+  chiefRelease: 0.5,        // share of the store a chief hands out in a hungry year
   polygynyMaxWives: 4,
   unpairedViolence: 0.012,  // yearly chance per unpaired adult man of a deadly fight
   succesionCrisis: 0.3,
@@ -168,6 +170,9 @@ export const PARAM_UI = [
   { group: 'Conflict', path: 'casualtyLoser', label: 'Deaths among the losing side', min: 0, max: 0.8, step: 0.01 },
   { group: 'Conflict', path: 'casualtyWinner', label: 'Deaths among the winning side', min: 0, max: 0.5, step: 0.01 },
   { group: 'Conflict', path: 'unpairedViolence', label: 'Fights among unpaired men', min: 0, max: 0.1, step: 0.002 },
+  { group: 'Rulers', path: 'eliteCut', label: 'Tribute to the chief (share of food)', min: 0, max: 0.5, step: 0.01 },
+  { group: 'Rulers', path: 'eliteEat', label: "Chief's household eats (× need)", min: 1, max: 3, step: 0.05 },
+  { group: 'Rulers', path: 'chiefRelease', label: 'Share of the store handed out in famine', min: 0, max: 1, step: 0.05 },
   { group: 'Culture', path: 'inventBase', label: 'Invention rate', min: 0, max: 0.03, step: 0.0005 },
   { group: 'Culture', path: 'driftRate', label: 'Rule drift per gene per year', min: 0, max: 0.02, step: 0.0005 },
   { group: 'Culture', path: 'imitateRate', label: 'Imitating a richer neighbour', min: 0, max: 0.2, step: 0.005 },

@@ -522,7 +522,7 @@ export function runSim(cfg) {
           }
         }
         let choice;
-        const male = ['hunt', 'fish', 'herd', 'farm'], female = ['plant', 'fish', 'farm']; // men clear and plough, women gather and hoe
+        const male = ['hunt', 'fish', 'herd', 'farm'], female = ['plant', 'fish', 'farm', 'herd']; // men clear, plough and take the far grazing; women gather, hoe, milk and herd near camp
         const sexDefault = () => options.filter(o => (p.sex === 'M' ? male : female).includes(o.act)).sort((a, b) => b.v - a.v)[0];
         const bestAny = () => options.slice().sort((a, b) => b.v - a.v)[0];
         if (g.labour === 'bySex') choice = sexDefault() || bestAny();
@@ -675,14 +675,25 @@ export function runSim(cfg) {
         const stored = s.stores.get(k) || 0;
         let avail = gr.food * (1 - ritualCost) + stored;
         totFood += gr.food; totNeed += gr.need;
-        // elite skim
+        // the chief's storehouse: tribute goes into it, his household eats well from it,
+        // and in a hungry year he hands part of it out (chiefly redistribution as famine insurance)
         if (g.sharing === 'ruler' && leaderKin.size) {
           const elite = gr.people.filter(p => leaderKin.has(p.id));
-          const eliteNeed = elite.reduce((a, p) => a + needOf(p, y), 0);
-          const cut = Math.min(avail, eliteNeed * 1.0 + avail * P.eliteCut);
-          elite.forEach(p => p.foodRatio = Math.min(1.5, cut / Math.max(1, eliteNeed)));
-          avail -= cut;
           const rest = gr.people.filter(p => !leaderKin.has(p.id));
+          const eliteNeed = elite.reduce((a, p) => a + needOf(p, y), 0);
+          const restNeed = rest.reduce((a, p) => a + needOf(p, y), 0);
+          const tribute = avail * P.eliteCut;
+          avail -= tribute;
+          let store = (s.stores.get('chief') || 0) + tribute;
+          // the chief's household is fed first: from the store, then from the common pot
+          const want = eliteNeed * P.eliteEat;
+          let eaten = Math.min(store, want); store -= eaten;
+          if (eaten < eliteNeed) { const more = Math.min(avail, eliteNeed - eaten); eaten += more; avail -= more; }
+          elite.forEach(p => p.foodRatio = eliteNeed ? Math.min(1, eaten / eliteNeed) : 1);
+          let released = 0;
+          if (avail < restNeed && store > 0) { released = Math.min(store * P.chiefRelease, restNeed - avail); avail += released; store -= released; }
+          s.stores.set('chief', store * (1 - decayOf(s)));
+          if (released > restNeed * 0.1 && y - (s.lastRelief || -99) > 4) { s.lastRelief = y; log({ y, t: 'relief', soc: s.id, kcal: Math.round(released), who: s.leader }); }
           distribute(rest, avail, k, s, y, ratios);
           elite.forEach(p => ratios.push(p.foodRatio));
         } else distribute(gr.people, avail, k, s, y, ratios);
