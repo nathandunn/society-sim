@@ -14,7 +14,20 @@ node tools/sweep.mjs 10 500                 # every preset pair, in every world
 node tools/envcheck.mjs 3                   # per-world calibration snapshot
 ```
 
-Serve `public/` with any static server.
+Serve `public/` with any static server, or run `npm start` (the hub server: the app plus the sweep API).
+
+## Hub sweep service (v0.3)
+
+`server/server.mjs` serves the app and runs sweeps on the hub's CPUs (one job at a time, runs spread over `SWEEP_WORKERS` threads, sweeps run at lowered priority):
+
+| Route | |
+| --- | --- |
+| `POST /api/sweeps` | `{pairs:[{a:{name,genome},b:{name,genome}}], envs, seeds, years, tune}` → job (identical requests return the cached job) |
+| `GET /api/sweeps/:id` | progress and per-pair results |
+| `GET /api/sweeps` | recent jobs |
+| `GET /api/health` | version, workers, queue |
+
+Limits: 200 seeds, 28 pairs, 4 worlds, 12,000 runs, 4 queued jobs. Finished jobs are kept on the `society-sim-data` volume, keyed by model version, so a new model never reuses old results. Deployed with `docker-compose.yml` by the hub's `deploy.sh`.
 
 ## Layout
 
@@ -40,6 +53,17 @@ Serve `public/` with any static server.
 The **Fields & herds owned by** gene (communal, lineage, household, ruler) decides who may work a field or tend a herd, who inherits it, and how much the ruler takes. Wealth raises status, and status wins wives.
 
 Versioning: `package.json` and `MODEL_VERSION` in `src/params.js` must match (a test checks). The build stamps version, commit and date into `public/version.js`; the page header shows it and every result and export carries it.
+
+## Disease (v0.3)
+
+Two kinds, as in the forager record (illness causes about 70% of forager deaths, Gurven & Kaplan 2007):
+
+- **Everyday illness**: infant illness, infection and other illness. Hunger multiplies these hazards (`hungerIllness`), so most hunger deaths are illness deaths; outright starvation happens only past the `famineLine`.
+- **Contagious strains**: respiratory, gut, fever and pox strains spill over from wild animals, herds and crowded villages. An outbreak infects a share of the *susceptible* people given by the SIR final-size equation; survivors are immune, so outbreaks return as children are born. Small bands cannot keep crowd diseases going (measles needs a population of hundreds of thousands), so strains burn out and come back only by new spillover or by contact: trade, raids, kin and captives. A strain new to a people (no one immune) hits hardest.
+
+## Winning
+
+A society wins by surviving: its line (the founders or any band that split from them) is alive at the end. Share of the world's people breaks ties.
 
 ## Calibration (v0.1)
 
