@@ -9,10 +9,12 @@
 // Jobs run one at a time; each run is farmed out to a pool of worker threads.
 // Finished jobs are written to $DATA_DIR/sweeps/<id>.json and survive redeploys
 // (the cache key includes the model version, so a new model never reuses old results).
+// Unfinished jobs are checkpointed to <id>.pending.json after every pair, and resumed
+// from the last finished pair when the server restarts.
 import http from 'node:http';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
-import { readFile, writeFile, mkdir, readdir, stat } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, readdir, stat, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { Worker } from 'node:worker_threads';
 import { extname, join, normalize } from 'node:path';
@@ -90,6 +92,8 @@ const queue = [];
 let running = null;
 
 const jobPath = id => join(DATA, 'sweeps', id + '.json');
+const pendingPath = id => join(DATA, 'sweeps', id + '.pending.json');
+const checkpoint = j => writeFile(pendingPath(j.id), JSON.stringify({ id: j.id, req: j.req, version: j.version, created: j.created, results: j.results })).catch(() => {});
 const publicJob = j => ({ id: j.id, status: j.status, version: j.version, created: j.created, finished: j.finished, total: j.total, done: j.done,
   request: { envs: j.req.envs, seeds: j.req.seeds, years: j.req.years, tune: j.req.tune, pairs: j.req.pairs.map(p => ({ a: p.a.name, b: p.b.name })) },
   results: j.results, error: j.error, position: j.status === 'queued' ? queue.indexOf(j) + 1 : undefined });
@@ -101,11 +105,13 @@ async function startNext() {
   try {
     const params = { ...tuningToParams(j.req.tune), years: j.req.years };
     for (const env of j.req.envs) {
-      for (const p of j.req.pairs) {
+      for (const [pi, p] of j.req.pairs.entries()) {
+        if (j.results.some(r => r.env === env && r.pi === pi)) continue; // finished before a restart
         const tasks = [];
         for (let k = 0; k < j.req.seeds; k++) tasks.push(runTask({ a: p.a, b: p.b, seed: 1000 + k, params: { ...params, env } }).then(r => { j.done++; return r; }));
         const runs = await Promise.all(tasks);
-        j.results.push({ env, ...aggregate(p.a.name, p.b.name, runs) });
+        j.results.push({ env, pi, ...aggregate(p.a.name, p.b.name, runs) });
+        await checkpoint(j);
       }
     }
     j.status = 'done';
@@ -113,7 +119,7 @@ async function startNext() {
     j.status = 'failed'; j.error = String(e.message || e);
   }
   j.finished = new Date().toISOString();
-  if (j.status === 'done') await writeFile(jobPath(j.id), JSON.stringify(publicJob(j))).catch(() => {});
+  if (j.status === 'done') { await writeFile(jobPath(j.id), JSON.stringify(publicJob(j))).catch(() => {}); await rm(pendingPath(j.id), { force: true }).catch(() => {}); }
   running = null;
   startNext();
 }
@@ -125,7 +131,7 @@ async function submit(body) {
   if (existsSync(jobPath(id))) { const j = JSON.parse(await readFile(jobPath(id), 'utf8')); jobs.set(id, { ...j, req: { ...req } }); return jobs.get(id); }
   if (queue.length >= LIMITS.queue) { const e = new Error('The sweep queue is full; try again in a few minutes.'); e.status = 503; throw e; }
   const j = { id, req, status: 'queued', version: MODEL_VERSION, created: new Date().toISOString(), total: req.total, done: 0, results: [] };
-  jobs.set(id, j); queue.push(j); startNext();
+  jobs.set(id, j); queue.push(j); await checkpoint(j); startNext();
   return j;
 }
 
@@ -137,7 +143,7 @@ async function getJob(id) {
 }
 
 async function recent() {
-  const files = (await readdir(join(DATA, 'sweeps')).catch(() => [])).filter(f => f.endsWith('.json'));
+  const files = (await readdir(join(DATA, 'sweeps')).catch(() => [])).filter(f => f.endsWith('.json') && !f.endsWith('.pending.json'));
   const saved = await Promise.all(files.map(async f => ({ f, t: (await stat(join(DATA, 'sweeps', f))).mtimeMs })));
   saved.sort((x, y) => y.t - x.t);
   const out = [];
@@ -150,6 +156,18 @@ async function recent() {
   return out.map(j => ({ id: j.id, status: j.status, version: j.version, created: j.created, finished: j.finished, total: j.total, done: j.done,
     envs: j.request?.envs, seeds: j.request?.seeds, pairs: j.request?.pairs?.length }));
 }
+
+// resume jobs a restart interrupted
+for (const f of (await readdir(join(DATA, 'sweeps')).catch(() => [])).filter(f => f.endsWith('.pending.json'))) {
+  try {
+    const c = JSON.parse(await readFile(join(DATA, 'sweeps', f), 'utf8'));
+    if (c.version !== MODEL_VERSION) { await rm(join(DATA, 'sweeps', f), { force: true }); continue; } // the model changed; old runs no longer apply
+    const j = { id: c.id, req: c.req, status: 'queued', version: c.version, created: c.created, total: c.req.total, done: c.results.length * c.req.seeds, results: c.results, resumed: true };
+    jobs.set(j.id, j); queue.push(j);
+    console.log(`resuming sweep ${j.id}: ${c.results.length} pairs already done`);
+  } catch (e) { console.log('could not resume', f, e.message); }
+}
+startNext();
 
 // ---------- http ----------
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.mjs': 'application/javascript; charset=utf-8',
