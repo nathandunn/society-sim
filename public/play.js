@@ -24,7 +24,16 @@ export function initPlay(ctx) {
     w.onmessage = ev => {
       const m = ev.data;
       if (m.type === 'meta') { meta = m.meta; snap = m.snap; meta.societies.forEach(s => socInfo.set(s.id, { ...s, parent: null })); frames = []; pops = []; drawMap(null); setYear(0); showInspector(); }
-      else if (m.type === 'frames') { waiting = false; m.frames.forEach(onFrame); done = m.done; if (done) { stop(); finish(); } }
+      else if (m.type === 'frames') {
+        waiting = false; m.frames.forEach(onFrame); done = m.done;
+        if (m.stopped) {
+          render();
+          const y = frames.at(-1)?.y ?? 0;
+          $('#pStatus').innerHTML = m.hit ? `<b>Stopped at year ${y}:</b> ${esc(m.hit)}. Look inside below, change what you like, and run on.`
+            : `Ran ${m.stopped.years} year${m.stopped.years === 1 ? '' : 's'} to year ${y}${m.stopped.until !== 'none' ? ' — it never happened' : ''}.`;
+        }
+        if (done) { stop(); finish(); }
+      }
       else if (m.type === 'snapshot') { snap = m.snap; showInspector(); }
       else if (m.type === 'person') renderPerson(m.person);
       else if (m.type === 'intervened') { pending.push(m.rec); renderPending(); if (!base) w.postMessage({ type: 'baseline' }); }
@@ -63,6 +72,15 @@ export function initPlay(ctx) {
     if (waiting || done || !w) return;
     waiting = true; w.postMessage({ type: 'step', n });
     if (!quiet) w.postMessage({ type: 'snapshot' });
+    requestAnimationFrame(render);
+  }
+  function runUntil() {
+    if (waiting || done || !w) return;
+    if (playing) play();
+    const until = $('#pUntil').value, who = $('#pWho').value;
+    waiting = true;
+    $('#pStatus').textContent = 'Running…';
+    w.postMessage({ type: 'runUntil', max: Math.max(1, Math.min(1000, +$('#pMax').value || 50)), until, soc: who === 'any' ? null : sel });
     requestAnimationFrame(render);
   }
   function render() {
@@ -272,6 +290,7 @@ export function initPlay(ctx) {
   $('#pPlay').onclick = play;
   $('#pStep').onclick = () => step(1);
   $('#pStep10').onclick = () => step(10);
+  $('#pRunUntil').onclick = runUntil;
   $('#pSpeed').innerHTML = SPEEDS.map((s, i) => `<option value="${i}" ${i === 2 ? 'selected' : ''}>${s} yr/s</option>`).join('');
   addEventListener('resize', () => { if (meta) { drawMap(frames.at(-1)); drawChart(); } });
   return { start };

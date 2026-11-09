@@ -175,3 +175,7 @@ td.bad, .tag.bad { color: var(--bad); }
 .small { font-size: 12.5px; }
 #pPeople { max-height: 70vh; overflow: auto; }
 #pPeople thead th { position: sticky; top: 0; background: var(--panel); }
+@media (min-width: 861px) { .playbar { position: sticky; top: 0; z-index: 5; box-shadow: 0 2px 8px rgba(0,0,0,.06); } }
+.rununtil { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 14px; color: var(--muted); }
+.rununtil input { width: 4.5em; }
+.rununtil select { max-width: 16em; }

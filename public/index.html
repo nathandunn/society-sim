@@ -88,8 +88,22 @@
         <button id="pStep10">+10 years</button>
         <label>Speed <select id="pSpeed"></select></label>
         <b id="pYear" class="pyear">Year 0</b>
+        <span class="rununtil">Run up to <input id="pMax" type="number" value="50" min="1" max="1000" aria-label="Most years to run"> years, stopping at
+          <select id="pUntil" aria-label="Stop when">
+            <option value="none">nothing (run them all)</option>
+            <option value="cataclysm" selected>a cataclysm</option>
+            <option value="leader">a change of leader</option>
+            <option value="raid">a raid</option>
+            <option value="epidemic">an epidemic</option>
+            <option value="famine">hunger (under 75% fed)</option>
+            <option value="rule">a rule change</option>
+            <option value="tech">a technology gained or lost</option>
+            <option value="split">a split, merger, conquest or extinction</option>
+          </select>
+          in <select id="pWho" aria-label="Which society"><option value="sel">the picked society</option><option value="any">any society</option></select>
+          <button id="pRunUntil" class="primary">Run</button></span>
       </span>
-      <p id="pStatus" class="hint pstatus">Set up two societies and a world above, then start. You can pause at any year, look at every person, and change rules or send blights, plagues, gifts and raids. Your changes are replayed exactly, and the history without them is drawn beside yours.</p>
+      <p id="pStatus" class="hint pstatus">Set up two societies and a world above, then start. Make a change, then run a few years or until something happens — a new leader, a raid, a plague, a cataclysm. You can pause at any year, look at every person, and change rules or send blights, plagues, gifts and raids. Your changes are replayed exactly, and the history without them is drawn beside yours.</p>
     </section>
     <div class="playgrid">
       <section class="panel"><h2>The world</h2><p class="hint">Circles are moving camps, squares settled villages, tinted cells fields. Red arrows are raids (dashed: beaten off), purple rings outbreaks, an orange dot a hungry camp. Click a camp to pick it.</p><div class="mapbox"><canvas id="pMap"></canvas></div></section>
