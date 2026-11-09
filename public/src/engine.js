@@ -31,6 +31,15 @@ export function deepMerge(base, over) {
 }
 
 export function runSim(cfg) {
+  const sim = createSim(cfg);
+  while (sim.step()) { /* run to the end */ }
+  return sim.result();
+}
+
+// A simulation that can be stepped a year at a time, paused, inspected and interfered with.
+// Interventions are recorded as { y, t, ... } and applied at the start of year y, so a run with the same
+// seed and the same interventions always replays the same history.
+export function createSim(cfg) {
   let P = deepMerge(DEFAULT_PARAMS, cfg.params || {});
   const rng = mulberry32(cfg.seed ?? 1);
   const R = () => rng();
@@ -395,7 +404,17 @@ export function runSim(cfg) {
 
   // ---------- Year loop ----------
   let lastSocietyCount = societies.length;
-  for (let y = 0; y < years; y++) {
+  const interventions = (cfg.interventions || []).map(iv => ({ ...iv }));
+  let nextYear = 0, ended = false;
+  function stepYear() {
+    if (ended || nextYear >= years) return false;
+    const y0 = nextYear;
+    for (const iv of interventions) if (iv.y === y0) applyIntervention(iv, y0);
+    yearBody(y0);
+    nextYear++;
+    return !ended && nextYear < years;
+  }
+  function yearBody(y) { for (let once = 0; once < 1; once++) {
     curYear = y;
     // --- climate & shocks ---
     const cr = R();
@@ -597,6 +616,7 @@ export function runSim(cfg) {
         else choice = (R() < 0.5 ? sexDefault() : bestAny()) || bestAny();
         if (!choice) continue;
         let got = choice.v * eff;
+        if (s.blight > 0) got *= 0.35; // a blight sent by the player
         if (choice.act === 'farm') {
           const pt = choice.pt;
           got *= Math.pow(clamp(climate, 0.2, 1.5), has(s, 'irrigation') ? 0.6 : 1.4) * Math.max(0, 1 + normal() * 0.12) * (pt.flooded === y ? 0.2 : 1);
@@ -773,6 +793,7 @@ export function runSim(cfg) {
         if (gap > 0) { const used = Math.min(pot, gap); short.forEach(gr => gr.food += used * (gr.need - gr.food) / gap); pot -= used; }
         if (pot > 0) { const tn = [...groups.values()].reduce((t, gr) => t + gr.need, 0) || 1; for (const gr of groups.values()) gr.food += pot * gr.need / tn; }
       }
+      if (s.gift > 0) { const tn = [...groups.values()].reduce((t, gr) => t + gr.need, 0) || 1; for (const gr of groups.values()) gr.food += s.gift * gr.need / tn; s.gift = 0; }
       for (const [k, gr] of groups) {
         const stored = s.stores.get(k) || 0;
         let avail = gr.food * (1 - ritualCost) + stored;
@@ -1145,10 +1166,13 @@ export function runSim(cfg) {
         if (gA.governance === 'totalitarian') pressure += 0.3;
         const herdPer = x => [...x.herds.values()].reduce((a, b) => a + b, 0) / Math.max(1, members(x).length);
         if (herdPer(B) > 1 && herdPer(B) > herdPer(A) * 1.2) pressure += 0.35; // livestock envy
+        if (A.truce && A.truce[B.id] > y) continue; // a peace the player imposed
+        const forced = A.forceRaid === B.id; if (forced) A.forceRaid = null;
         let thr = P.raidThreshold;
         if (gA.governance === 'democracy') { const prev = A.lastPressure[B.id] ?? pressure; A.lastPressure[B.id] = pressure; pressure = prev; thr += 0.15; }
         let pr = P.raidBase * sigmoid(P.raidSlope * (pressure - thr));
         if (gA.governance === 'anarchy') pr *= 0.6;
+        if (forced) pr = 1; // the player ordered it
         if (R() >= pr) continue;
         // party
         let party;
@@ -1332,7 +1356,7 @@ export function runSim(cfg) {
       const g = s.genome;
       // ritual responds to threat whether or not genomes are frozen (it is a dial of lived cohesion)
       const threatened = y - s.lastRaidYear < 25;
-      if (!P.freezeGenomes) {
+      if (!P.freezeGenomes && !s.locked) {
         g.ritual = clamp(g.ritual + (threatened ? 0.002 : -P.ritualDecay), 0, 1);
         if (Math.abs(g.ritual - s.ritualLogged) >= 0.1) {
           log({ y, t: 'gene', soc: s.id, gene: 'ritual', from: +s.ritualLogged.toFixed(2), to: +g.ritual.toFixed(2), via: threatened ? 'threat' : 'peace decay' });
@@ -1403,10 +1427,98 @@ export function runSim(cfg) {
       sd.polygyny[y] = wives.length ? +(wives.filter(w => aliveSpouses(byId.get(aliveSpouses(w)[0])).length > 1).length / wives.length).toFixed(3) : 0;
       if (s.id < nFounders) sd.ancestry[y] = +(people.filter(p => p.alive).reduce((a, p) => a + p.ancestry[s.id], 0) / total).toFixed(3);
     }
-    if (!societies.some(s => s.alive)) { log({ y, t: 'island empty' }); break; }
+    societies.forEach(s => { if (s.blight > 0) s.blight--; });
+    if (!societies.some(s => s.alive)) { log({ y, t: 'island empty' }); ended = true; }
     // keep only the living in the hot list (genealogy stays in byId)
     for (let i = people.length - 1; i >= 0; i--) if (!people[i].alive) people.splice(i, 1);
     popVer++;
+  } }
+
+  // ---------- interventions (the player's hand) ----------
+  function applyIntervention(iv, y) {
+    const s = societies[iv.soc], o = iv.to != null ? societies[iv.to] : null;
+    if (!s || (!s.alive && iv.t !== 'note')) return;
+    const say = (what) => log({ y, t: 'intervene', soc: s.id, what });
+    switch (iv.t) {
+      case 'gene': {
+        const spec = GENES[iv.gene]; if (!spec) return;
+        const v = spec.kind === 'dial' ? clamp(+iv.value, spec.min ?? 0, spec.max ?? 1) : iv.value;
+        if (spec.kind === 'enum' && !spec.values.includes(v)) return;
+        const from = s.genome[iv.gene]; s.genome[iv.gene] = v;
+        if (iv.gene === 'ritual') s.ritualLogged = v;
+        log({ y, t: 'gene', soc: s.id, gene: iv.gene, from, to: v, via: 'decree' });
+        break;
+      }
+      case 'lock': s.locked = !!iv.on; say(iv.on ? 'rules locked against change' : 'rules free to change again'); break;
+      case 'famine': s.blight = (s.blight || 0) + (iv.years || 3); for (const k of s.stores.keys()) s.stores.set(k, 0); say(`blight: harvests fail for ${iv.years || 3} years, stores rot`); break;
+      case 'plague': { const st = newStrain(iv.source || 'wild', y); say(`plague sent: ${st.name}`); outbreak(s, st, y, 'sent by the player'); break; }
+      case 'gift': { s.gift = (s.gift || 0) + (iv.years || 1) * members(s).length * P.adultNeed; say(`gift of food: ${iv.years || 1} year(s) of rations`); break; }
+      case 'tech': if (TECHS[iv.tech] && !s.techs.has(iv.tech)) { s.techs.add(iv.tech); log({ y, t: 'tech', soc: s.id, tech: iv.tech, via: 'gift from the player' }); } break;
+      case 'raid': if (o && o.alive) { s.forceRaid = o.id; say(`ordered to raid ${o.name}`); } break;
+      case 'peace': if (o) { const until = y + (iv.years || 20); s.truce = { ...(s.truce || {}), [o.id]: until }; o.truce = { ...(o.truce || {}), [s.id]: until };
+        s.grievance[o.id] = 0; o.grievance[s.id] = 0; say(`peace with ${o.name} until year ${until}`); } break;
+      case 'killLeader': { const L = byId.get(s.leader); if (L && L.alive) { kill(L, y, 'intervention', ['struck down by the player']); say(`leader #${L.id} struck down`); } break; }
+      case 'crown': { const c = byId.get(iv.who); if (c && c.alive && c.soc === s.id) { s.leader = c.id; say(`#${c.id} made leader`); } break; }
+      case 'freeSlaves': { const sl = members(s).filter(p => p.status === 'slave'); sl.forEach(p => { p.status = 'free'; }); say(`${sl.length} slaves freed`); break; }
+      case 'migrants': { // newcomers arrive from beyond the map
+        const n = Math.max(1, Math.min(60, iv.n || 10));
+        for (let k = 0; k < n; k++) {
+          const sex = k % 2 ? 'F' : 'M';
+          const p = makePerson({ sex, born: y - 18 - Math.floor(R() * 15), soc: s.id, mother: 0, father: 0, ancestry: new Array(nFounders).fill(0), origin: s.id });
+          p.skill = Object.fromEntries(Object.keys(p.skill).map(d => [d, 0.3 + 0.2 * R()]));
+        }
+        popVer++; say(`${n} newcomers arrived`); break;
+      }
+    }
+  }
+  function intervene(iv) {
+    const rec = { ...iv, y: nextYear };
+    interventions.push(rec);
+    // applied at the start of the next year to be simulated, exactly as a replay would
+    return rec;
+  }
+
+  // ---------- inspection ----------
+  const personView = (p, y) => ({ id: p.id, soc: p.soc, sex: p.sex, age: y - p.born, status: p.status, activity: p.activity, harvest: Math.round((p.harvest || 0) / 1e4) / 100,
+    fed: +(p.foodRatio ?? 1).toFixed(2), spouses: aliveSpouses(p).length, kids: p.kids.filter(id => byId.get(id)?.alive).length,
+    wealth: +(p.wealthRank || 0).toFixed(2), prestige: +(p.prestige || 0).toFixed(1), savings: +(p.savings || 0).toFixed(1),
+    hunt: +p.skill.hunt.toFixed(2), fight: +p.skill.fight.toFixed(2), leader: societies[p.soc]?.leader === p.id, warrior: !!societies[p.soc] && isWarrior(p, societies[p.soc], y) });
+  function snapshot() {
+    const y = Math.max(0, nextYear - 1);
+    return {
+      y, next: nextYear, ended: ended || nextYear >= years, years,
+      societies: societies.map(s => ({ id: s.id, name: s.name, color: s.color, alive: s.alive, parent: s.parent, home: s.home, pop: s.alive ? members(s).length : 0,
+        leader: s.leader, genome: { ...s.genome }, locked: !!s.locked, techs: [...s.techs], herds: Math.round(herdTotal(s)), sedentary: s.sedentary,
+        stores: Math.round([...s.stores.values()].reduce((a, b) => a + b, 0) / Math.max(1, members(s).length) / P.adultNeed * 100) / 100,
+        fed: +(s.meanRatio ?? 1).toFixed(2), slaves: s.alive ? members(s).filter(p => p.status === 'slave').length : 0, endReason: s.endReason || null })),
+      people: people.filter(p => p.alive).map(p => personView(p, y)),
+    };
+  }
+  function person(id) {
+    const p = byId.get(id); if (!p) return null;
+    const y = Math.max(0, nextYear - 1);
+    const brief = q => q ? { id: q.id, sex: q.sex, alive: q.alive, soc: q.soc, age: (q.alive ? y : (q.died ?? y)) - q.born } : null;
+    return {
+      ...personView(p, y), alive: p.alive, born: p.born, died: p.died ?? null, cause: p.cause ?? null, origin: p.origin,
+      mother: brief(byId.get(p.mother)), father: brief(byId.get(p.father)),
+      spouseList: p.spouses.map(id => brief(byId.get(id))).filter(Boolean),
+      kidList: p.kids.map(id => brief(byId.get(id))).filter(Boolean),
+      life: events.filter(e => e.who === id || e.victim === id || e.groom === id || (e.t === 'birth' && (e.mother === id || e.father === id))).slice(0, 200),
+    };
+  }
+  // what the map needs for one year
+  let evMark = 0;
+  function frame() {
+    const y = Math.max(0, nextYear - 1);
+    const fresh = events.slice(evMark); evMark = events.length;
+    return {
+      y,
+      socs: societies.filter(s => s.alive).map(s => ({ id: s.id, name: s.name, color: s.color, parent: s.parent, home: s.home, leader: s.leader, pop: members(s).length, herds: Math.round(herdTotal(s)), sedentary: s.sedentary, fed: +(s.meanRatio ?? 1).toFixed(2) })),
+      fields: patches.map((pt, i) => pt.field ? [i, pt.field.soc] : null).filter(Boolean),
+      events: fresh.filter(e => e.t !== 'death' && e.t !== 'birth' && e.t !== 'inherit' && e.t !== 'trade'),
+      deaths: fresh.filter(e => e.t === 'death').length, births: fresh.filter(e => e.t === 'birth').length,
+      pops: societies.map(s => s.alive ? members(s).length : 0),
+    };
   }
 
   // ---------- fission & absorption ----------
@@ -1473,6 +1585,7 @@ export function runSim(cfg) {
   }
 
   // ---------- summary & digest ----------
+  function result() {
   const lastY = series.climate.length - 1;
   const totalEnd = people.filter(p => p.alive).length;
   const summary = societies.map(s => {
@@ -1497,7 +1610,17 @@ export function runSim(cfg) {
     strains, version: MODEL_VERSION, seed: cfg.seed, years: lastY + 1, params: P, env: envKey, envName: ENVIRONMENTS[envKey].name, grid: G,
     map: patches.map(pt => pt.land ? (pt.water ? 3 : pt.arable && pt.fert >= 1 ? 2 : pt.grass ? 4 : 1) : 0),
     societies: societies.map(s => ({ id: s.id, name: s.name, color: s.color, parent: s.parent, founded: s.founded })),
-    series, sseries, events, summary, digest,
+    series, sseries, events, summary, digest, interventions: interventions.map(iv => ({ ...iv })),
+  };
+  }
+
+  return {
+    step: stepYear, result, snapshot, person, frame, intervene,
+    get year() { return nextYear; }, get done() { return ended || nextYear >= years; },
+    meta: () => ({ grid: G, env: envKey, envName: ENVIRONMENTS[envKey].name, years, version: MODEL_VERSION,
+      map: patches.map(pt => pt.land ? (pt.water ? 3 : pt.arable && pt.fert >= 1 ? 2 : pt.grass ? 4 : 1) : 0),
+      isles: patches.map(pt => pt.isle ?? 0),
+      societies: societies.map(s => ({ id: s.id, name: s.name, color: s.color })) }),
   };
 }
 

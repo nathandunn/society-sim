@@ -17,6 +17,7 @@
   </div>
   <nav class="tabs" role="tablist">
     <button class="tab on" data-tab="run" role="tab">Single run</button>
+    <button class="tab" data-tab="play" role="tab">Play</button>
     <button class="tab" data-tab="sweep" role="tab">Sweep</button>
     <button class="tab" data-tab="about" role="tab">Model</button>
   </nav>
@@ -78,12 +79,43 @@
     <div class="exports"><button id="expJson">Export run (JSON)</button><button id="expCsv">Export event log (CSV)</button></div>
   </section>
 
+  <section id="tab-play" hidden>
+    <section class="panel playbar">
+      <button id="pStart" class="primary">Start a new history</button>
+      <span id="pPlayBox" hidden class="pctl">
+        <button id="pPlay">▶ Play</button>
+        <button id="pStep">+1 year</button>
+        <button id="pStep10">+10 years</button>
+        <label>Speed <select id="pSpeed"></select></label>
+        <b id="pYear" class="pyear">Year 0</b>
+      </span>
+      <p id="pStatus" class="hint pstatus">Set up two societies and a world above, then start. You can pause at any year, look at every person, and change rules or send blights, plagues, gifts and raids. Your changes are replayed exactly, and the history without them is drawn beside yours.</p>
+    </section>
+    <div class="playgrid">
+      <section class="panel"><h2>The world</h2><p class="hint">Circles are moving camps, squares settled villages, tinted cells fields. Red arrows are raids (dashed: beaten off), purple rings outbreaks, an orange dot a hungry camp. Click a camp to pick it.</p><div class="mapbox"><canvas id="pMap"></canvas></div></section>
+      <section class="panel"><h2>Population</h2><div id="pChart"></div><div id="pChartKey" class="key"></div><h3>Lately</h3><div id="pEvents" class="log plog"></div></section>
+    </div>
+    <section id="pInspect" class="panel">
+      <h2>Look inside and step in</h2>
+      <p class="hint">Pause first. Anything you do takes effect as the next year begins.</p>
+      <div id="pSocTabs" class="chips"></div>
+      <div id="pPending"></div>
+      <div id="pSoc"></div>
+      <h3>People</h3>
+      <div id="pFilters" class="chips"></div>
+      <div class="peoplegrid"><div id="pPeople" class="tablewrap"></div><aside id="pPerson" class="person" hidden></aside></div>
+    </section>
+    <section id="pCompare" class="panel" hidden><h2>How your changes turned out</h2><div id="pCompareBody" class="tablewrap"></div></section>
+  </section>
+
   <section id="tab-sweep" hidden>
     <section class="panel">
       <h2>Sweep</h2>
       <p class="hint">Round robin of the societies you tick, plus the two custom ones above, in each world you tick. Each pair runs N seeds. A society wins by surviving: its line counts as alive if the founders or any band that split from them are alive at the end. Your baseline tuning applies.</p>
       <div id="sweepPick" class="pickgrid"></div>
-      <h3>Worlds</h3>
+      <h3>Play mode</h3>
+    <p>Play runs one history a year at a time on a map. Pause at any year to see every person — age, work, how well fed, spouses, children, wealth, skills — and open anyone's family and life story. While paused you can rewrite a society's rules (and lock them against drift), send a blight or a plague, gift food, a technology or newcomers, order a raid or impose a peace, strike down a leader or crown someone, or free the slaves. Each change is recorded and takes effect as the next year begins, so the same seed and the same changes always replay the same history; the history without your changes is drawn dashed beside yours.</p>
+    <h3>Worlds</h3>
       <div id="sweepEnvs" class="pickgrid"></div>
       <div class="runbar">
         <label>Seeds per pair <input id="sSeeds" type="number" value="50" min="2" max="200"></label>
@@ -104,6 +136,8 @@
   <section id="tab-about" hidden class="panel prose">
     <h2>The model</h2>
     <p>Every person is an agent with a mother, a father, skills and a cause of death. One tick is one year. Each society carries a <b>genome</b> of rules — marriage, mate choice, descent, residence, labour, sharing, foraging, trade, governance, norm enforcement, outgroup stance, captives, famine policy, fission size and ritual — and the rules change only what they mechanically change.</p>
+    <h3>Play mode</h3>
+    <p>Play runs one history a year at a time on a map. Pause at any year to see every person — age, work, how well fed, spouses, children, wealth, skills — and open anyone's family and life story. While paused you can rewrite a society's rules (and lock them against drift), send a blight or a plague, gift food, a technology or newcomers, order a raid or impose a peace, strike down a leader or crown someone, or free the slaves. Each change is recorded and takes effect as the next year begins, so the same seed and the same changes always replay the same history; the history without your changes is drawn dashed beside yours.</p>
     <h3>Worlds</h3>
     <ul>
       <li><b>Rich forest.</b> Forager island with a rich shore; a few clearings could be farmed if someone invents cultivation.</li>

@@ -5,6 +5,7 @@ import { deepMerge } from './src/engine.js';
 import { ENVIRONMENTS } from './src/world.js';
 import { BUILD } from './version.js';
 import { lineChart, stackedBars } from './charts.js';
+import { initPlay } from './play.js';
 
 const $ = s => document.querySelector(s);
 const COLORS = ['#c2410c', '#1d4ed8', '#15803d', '#a21caf', '#b45309', '#0e7490'];
@@ -12,7 +13,7 @@ const CAUSE_GROUPS = [
   { key: 'illness', name: 'Illness', color: '#64748b', causes: ['infant illness', 'infection', 'other illness'] },
   { key: 'epidemic', name: 'Epidemic', color: '#7c3aed', causes: ['epidemic'] },
   { key: 'starvation', name: 'Starvation', color: '#d97706', causes: ['starvation'] },
-  { key: 'violence', name: 'Raids & violence', color: '#dc2626', causes: ['raid', 'mate fight', 'punishment', 'succession', 'revolt', 'killed captive', 'feud'] },
+  { key: 'violence', name: 'Raids & violence', color: '#dc2626', causes: ['raid', 'mate fight', 'punishment', 'succession', 'revolt', 'killed captive', 'feud', 'intervention'] },
   { key: 'birth', name: 'Childbirth & infanticide', color: '#db2777', causes: ['childbirth', 'infanticide'] },
   { key: 'accident', name: 'Accident', color: '#0891b2', causes: ['accident'] },
   { key: 'old', name: 'Old age', color: '#a8a29e', causes: ['old age'] },
@@ -129,11 +130,12 @@ function getWorker() {
   };
   return worker;
 }
+const runCfg = () => ({ genomes: socs.map(s => ({ ...s.genome })), names: socs.map(s => s.name), seed: +$('#seed').value || 1,
+  params: { ...tuningToParams(tune), years: +$('#years').value || 500, freezeGenomes: $('#freeze').checked, env: $('#env').value } });
 function run() {
   saveState();
   $('#runstatus').textContent = 'Simulating…'; $('#go').disabled = true;
-  getWorker().postMessage({ type: 'run', cfg: { genomes: socs.map(s => s.genome), names: socs.map(s => s.name), seed: +$('#seed').value || 1,
-    params: { ...tuningToParams(tune), years: +$('#years').value || 500, freezeGenomes: $('#freeze').checked, env: $('#env').value } } });
+  getWorker().postMessage({ type: 'run', cfg: runCfg() });
 }
 
 // ---------- results ----------
@@ -289,8 +291,8 @@ function renderLog() {
   $('#log').innerHTML = shown.map(e => `<div class="ev"><span class="y">${e.y}</span><span>${describe(e)}</span></div>`).join('') +
     (evs.length > shown.length ? `<div class="more">…and ${evs.length - shown.length} more. Narrow by year or society.</div>` : '') || '<div class="more">Nothing matches.</div>';
 }
-function describe(e) {
-  const S = result.societies, n = id => S[id] ? `<span class="dot" style="background:${S[id].color}"></span>${esc(S[id].name)}` : '';
+function describe(e, S = result.societies) {
+  const n = id => S[id] ? `<span class="dot" style="background:${S[id].color}"></span>${esc(S[id].name)}` : '';
   const f = e.f && e.f.length ? ` <span class="f">— ${e.f.map(esc).join(', ')}</span>` : '';
   switch (e.t) {
     case 'death': return `${n(e.soc)}: ${e.sex === 'F' ? 'woman' : 'man'} #${e.who}, ${e.age}, died of <b>${e.cause}</b>${f}`;
@@ -310,6 +312,7 @@ function describe(e) {
     case 'migrate': return `${e.n} moved from ${n(e.soc)} to ${n(e.to)} <span class="f">(open bands)</span>`;
     case 'alliance': return `${n(e.soc)}: <b>${e.n} kinsmen from brother segments</b> joined the fight with ${n(e.against)}`;
     case 'ageSet': return `${n(e.soc)}: <b>new age set initiated</b>; ${e.warriors} young men in the warrior grade`;
+    case 'intervene': return `${n(e.soc)}: <b>✋ ${esc(e.what)}</b>`;
     case 'farming': return `${n(e.soc)}: <b>first fields cleared</b>`;
     case 'sedentary': return `${n(e.soc)}: <b>${e.on ? 'settled into villages' : 'went back to moving camp'}</b> <span class="f">(farming ${pct(e.share)} of food)</span>`;
     case 'move': return `${n(e.soc)}: camp moved — ${esc(e.why)}`;
@@ -449,9 +452,10 @@ function renderSweep() {
 // ---------- wiring ----------
 document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
   document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === b));
-  ['run', 'sweep', 'about'].forEach(t => $('#tab-' + t).hidden = t !== b.dataset.tab);
+  ['run', 'play', 'sweep', 'about'].forEach(t => $('#tab-' + t).hidden = t !== b.dataset.tab);
   $('#setup').hidden = b.dataset.tab === 'about';
-  $('#setup .runbar').hidden = b.dataset.tab !== 'run';
+  $('#setup .runbar').hidden = b.dataset.tab !== 'run' && b.dataset.tab !== 'play';
+  $('#go').hidden = $('#dice').hidden = b.dataset.tab === 'play';
   if (b.dataset.tab === 'sweep') { renderSweepPick(); loadRecent(); }
 });
 $('#go').onclick = run;
@@ -474,3 +478,6 @@ renderTune();
 renderSetup();
 renderSweep();
 run();
+const showTab = t => document.querySelector(`.tab[data-tab="${t}"]`).click();
+initPlay({ esc, describe, getCfg: () => { saveState(); return runCfg(); },
+  showResult: (r) => { result = r; r.ms = r.ms || 0; pickYear = null; causeFilter = null; showTab('run'); renderResult(); } });

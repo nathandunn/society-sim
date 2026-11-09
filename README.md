@@ -4,6 +4,10 @@ Two bands share a world for 500 years — rich forest, a farmland river valley, 
 
 Live: https://society-sim.apps.precogsoftwareservices.com
 
+## Play mode
+
+The Play tab steps one history a year at a time on a map (`public/play.js`, worker `public/live.js`, engine `createSim`). Pause to inspect every person and step in: rule decrees, blight, plague, food, technology, newcomers, raids, peace, killing or crowning a leader, freeing slaves. Interventions are recorded as `{ y, t, ... }` and replay exactly via `runSim({ ...cfg, interventions })`.
+
 ## Run
 
 ```sh

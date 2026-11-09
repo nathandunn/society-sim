@@ -1,6 +1,6 @@
 // Sanity tests: determinism, demography within forager ranges, causality completeness.
 import assert from 'node:assert/strict';
-import { runSim } from '../src/engine.js';
+import { runSim, createSim } from '../src/engine.js';
 import { PRESETS } from '../src/genome.js';
 import { CAUSES, MODEL_VERSION } from '../src/params.js';
 import { readFileSync } from 'node:fs';
@@ -75,6 +75,27 @@ t('every world runs 150 years with somebody alive somewhere', () => {
     for (let seed = 1; seed <= 3; seed++) alive += runSim({ genomes: [PRESETS['Democratic egalitarian'], PRESETS['Patriarchal harem']], seed, params: { env, years: 150 } }).summary.some(s => s.alive) ? 1 : 0;
     assert.ok(alive >= 2, env + ' died out in ' + (3 - alive) + ' of 3 seeds');
   }
+});
+
+t('stepping a year at a time gives the same history as a full run', () => {
+  const sim = createSim(cfg(5)); while (sim.step()) { /* */ }
+  assert.deepEqual(sim.result().summary, runSim(cfg(5)).summary);
+});
+
+t('interventions replay exactly from the recorded list', () => {
+  const sim = createSim(cfg(4));
+  for (let i = 0; i < 60; i++) sim.step();
+  sim.intervene({ t: 'gene', soc: 1, gene: 'governance', value: 'democracy' });
+  sim.intervene({ t: 'famine', soc: 0, years: 3 });
+  sim.intervene({ t: 'migrants', soc: 0, n: 12 });
+  for (let i = 0; i < 40; i++) sim.step();
+  sim.intervene({ t: 'plague', soc: 0 }); sim.intervene({ t: 'freeSlaves', soc: 1 }); sim.intervene({ t: 'killLeader', soc: 1 });
+  while (sim.step()) { /* */ }
+  const a = sim.result();
+  const b = runSim({ ...cfg(4), interventions: a.interventions });
+  assert.deepEqual(a.summary, b.summary);
+  assert.ok(a.events.some(e => e.t === 'gene' && e.via === 'decree'));
+  assert.notDeepEqual(a.sseries[0].pop, runSim(cfg(4)).sseries[0].pop);
 });
 
 console.log(`${pass} tests passed`);

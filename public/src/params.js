@@ -3,7 +3,7 @@
 // TFR ~ 5-6, modal adult death ~ 70. Every value is tunable from the UI.
 
 // Model version: bump with package.json (tests check they match). Stamped into every result.
-export const MODEL_VERSION = '0.4.0';
+export const MODEL_VERSION = '0.5.0';
 
 export const DEFAULT_PARAMS = {
   years: 500,
@@ -141,7 +141,7 @@ export const DOMAINS = ['plant', 'hunt', 'fish', 'farm', 'herd', 'fight', 'heal'
 export const CAUSES = [
   'infant illness', 'infection', 'accident', 'other illness', 'old age', 'starvation',
   'childbirth', 'epidemic', 'raid', 'mate fight', 'punishment', 'infanticide', 'succession',
-  'revolt', 'killed captive', 'feud',
+  'revolt', 'killed captive', 'feud', 'intervention',
 ];
 
 // Parameters the app lets you tune. path = dotted key into the params object;
