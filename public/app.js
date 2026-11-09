@@ -1,4 +1,4 @@
-import { GENES, GENE_KEYS, PRESETS } from './src/genome.js';
+import { GENES, GENE_KEYS, PRESETS, withDefaults } from './src/genome.js';
 import { TECHS, DOMAINS, PARAM_UI, DEFAULT_PARAMS, getPath, tuningToParams } from './src/params.js';
 import { ENV_PARAMS } from './src/world.js';
 import { deepMerge } from './src/engine.js';
@@ -12,7 +12,7 @@ const CAUSE_GROUPS = [
   { key: 'illness', name: 'Illness', color: '#64748b', causes: ['infant illness', 'infection', 'other illness'] },
   { key: 'epidemic', name: 'Epidemic', color: '#7c3aed', causes: ['epidemic'] },
   { key: 'starvation', name: 'Starvation', color: '#d97706', causes: ['starvation'] },
-  { key: 'violence', name: 'Raids & violence', color: '#dc2626', causes: ['raid', 'mate fight', 'punishment', 'succession', 'revolt', 'killed captive'] },
+  { key: 'violence', name: 'Raids & violence', color: '#dc2626', causes: ['raid', 'mate fight', 'punishment', 'succession', 'revolt', 'killed captive', 'feud'] },
   { key: 'birth', name: 'Childbirth & infanticide', color: '#db2777', causes: ['childbirth', 'infanticide'] },
   { key: 'accident', name: 'Accident', color: '#0891b2', causes: ['accident'] },
   { key: 'old', name: 'Old age', color: '#a8a29e', causes: ['old age'] },
@@ -37,7 +37,7 @@ let tune = {};   // {param path: value in display units}
 function loadState() {
   try {
     const q = new URLSearchParams(location.hash.slice(1));
-    if (q.get('s')) { const st = JSON.parse(decodeURIComponent(atob(q.get('s')))); st.socs.forEach((s, i) => { socs[i] = s; if (!s.genome.property) s.genome.property = (PRESETS[s.preset] || {}).property || 'lineage'; }); $('#seed').value = st.seed; $('#years').value = st.years; if (st.env && ENVIRONMENTS[st.env]) $('#env').value = st.env; if (st.tune && typeof st.tune === 'object') tune = st.tune; }
+    if (q.get('s')) { const st = JSON.parse(decodeURIComponent(atob(q.get('s')))); st.socs.forEach((s, i) => { socs[i] = s; if (!s.genome.property) s.genome.property = (PRESETS[s.preset] || {}).property || 'lineage'; s.genome = withDefaults(s.genome); }); $('#seed').value = st.seed; $('#years').value = st.years; if (st.env && ENVIRONMENTS[st.env]) $('#env').value = st.env; if (st.tune && typeof st.tune === 'object') tune = st.tune; }
   } catch { /* ignore a bad hash */ }
 }
 function saveState() {
@@ -112,7 +112,7 @@ function renderSetup() {
   });
   $('#go').textContent = `Run ${$('#years').value} years`;
 }
-const gist = g => `${g.marriage}, ${g.descent}, ${g.residence} · ${g.governance} · shares by ${g.sharing}, property ${g.property} · ${g.outgroup} to outsiders, captives: ${g.captives}`;
+const gist = g => `${g.marriage}${g.marriagePayment && g.marriagePayment !== 'none' ? ' (' + g.marriagePayment + ')' : ''}, ${g.descent}, ${g.residence} · ${g.governance}${g.ageSets === 'warriors' ? ' + age sets' : ''} · shares by ${g.sharing}, property ${g.property}, status by ${g.prestige || 'hoard'} · ${g.outgroup} to outsiders, captives: ${g.captives}`;
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 // ---------- worker ----------
@@ -302,6 +302,14 @@ function describe(e) {
     case 'epidemic': return `${n(e.soc)}: <b>${esc(e.name || 'epidemic')}</b> ${esc(e.via || '')} — ${e.infected ?? '?'} sick, <b>${e.deaths} dead</b> <span class="f">(${e.susceptible != null ? pct(e.susceptible) + ' had no immunity, ' : ''}spread rate ${e.R ?? '?'})</span>`;
     case 'shock': return `World: <b>${e.what}</b>`;
     case 'relief': return `${n(e.soc)}: <b>the chief opened his storehouse</b>, ${Math.round(e.kcal / 1e6)}M kcal to the hungry`;
+    case 'bloodMoney': return `${n(e.soc)}: #${e.who}'s kin <b>paid blood money</b> for #${e.victim}`;
+    case 'feud': return `${n(e.soc)}: <b>feud</b> — #${e.who} killed in revenge for #${e.victim}`;
+    case 'bigman': return `${n(e.soc)}: <b>#${e.who} became Big Man</b> <span class="f">(prestige ${e.prestige}${e.from ? ', eclipsing #' + e.from : ''})</span>`;
+    case 'lapse': return `${n(e.soc)}: Big Man #${e.who} died — <b>his following scattered</b>`;
+    case 'patron': return `${n(e.soc)}: Big Man #${e.who} paid #${e.groom}'s bridewealth`;
+    case 'migrate': return `${e.n} moved from ${n(e.soc)} to ${n(e.to)} <span class="f">(open bands)</span>`;
+    case 'alliance': return `${n(e.soc)}: <b>${e.n} kinsmen from brother segments</b> joined the fight with ${n(e.against)}`;
+    case 'ageSet': return `${n(e.soc)}: <b>new age set initiated</b>; ${e.warriors} young men in the warrior grade`;
     case 'farming': return `${n(e.soc)}: <b>first fields cleared</b>`;
     case 'sedentary': return `${n(e.soc)}: <b>${e.on ? 'settled into villages' : 'went back to moving camp'}</b> <span class="f">(farming ${pct(e.share)} of food)</span>`;
     case 'move': return `${n(e.soc)}: camp moved — ${esc(e.why)}`;

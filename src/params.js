@@ -3,7 +3,7 @@
 // TFR ~ 5-6, modal adult death ~ 70. Every value is tunable from the UI.
 
 // Model version: bump with package.json (tests check they match). Stamped into every result.
-export const MODEL_VERSION = '0.3.1';
+export const MODEL_VERSION = '0.4.0';
 
 export const DEFAULT_PARAMS = {
   years: 500,
@@ -72,6 +72,20 @@ export const DEFAULT_PARAMS = {
   eliteEat: 1.25,           // the chief's household eats this multiple of its need from the store
   chiefRelease: 0.5,        // share of the store a chief hands out in a hungry year
   polygynyMaxWives: 4,
+  // --- Customs (v0.4) ---
+  maleMarryLate: 28,        // age men may marry where they marry late (bridewealth to raise, warriorhood to serve)
+  saveFrac: 0.3,            // share of a worker's surplus put by for marriage payments (pigs, cattle, valuables)
+  savingsCap: 6,            // most a person can hold, in adult-years of food
+  bridePrice: 1.5, bridePriceHerd: 4,   // bridewealth: adult-years of valuables, or livestock units
+  brideCredit: 0.25,        // chance a groom who can't pay marries on a promise, carrying the debt
+  dowry: 1, dowryHerd: 3,               // dowry, the same way
+  brideServiceYears: 5, brideServiceShare: 0.3, // years a new husband works for his in-laws, and the share of his catch they get
+  bloodPrice: 2, bloodPriceHerd: 6,     // blood money for a killing
+  feudRevenge: 0.4,         // chance unpaid blood money is answered with a killing
+  feastFrac: 0.5,           // share of a surplus given away at feasts where status is won by feasting
+  feastWaste: 0.15,         // share of a feast destroyed in display
+  fluidMove: 0.01,          // yearly chance a family moves to a kin band, where bands are open
+  fluidHunger: 0.3,         // extra chance per unit the other camp is eating better
   unpairedViolence: 0.012,  // yearly chance per unpaired adult man of a deadly fight
   succesionCrisis: 0.3,
   defection: 0.012,
@@ -127,7 +141,7 @@ export const DOMAINS = ['plant', 'hunt', 'fish', 'farm', 'herd', 'fight', 'heal'
 export const CAUSES = [
   'infant illness', 'infection', 'accident', 'other illness', 'old age', 'starvation',
   'childbirth', 'epidemic', 'raid', 'mate fight', 'punishment', 'infanticide', 'succession',
-  'revolt', 'killed captive',
+  'revolt', 'killed captive', 'feud',
 ];
 
 // Parameters the app lets you tune. path = dotted key into the params object;
@@ -173,6 +187,16 @@ export const PARAM_UI = [
   { group: 'Rulers', path: 'eliteCut', label: 'Tribute to the chief (share of food)', min: 0, max: 0.5, step: 0.01 },
   { group: 'Rulers', path: 'eliteEat', label: "Chief's household eats (× need)", min: 1, max: 3, step: 0.05 },
   { group: 'Rulers', path: 'chiefRelease', label: 'Share of the store handed out in famine', min: 0, max: 1, step: 0.05 },
+  { group: 'Customs', path: 'maleMarryLate', label: 'Age men marry, where they marry late', min: 20, max: 40, step: 1 },
+  { group: 'Customs', path: 'bridePrice', label: 'Bridewealth (years of surplus)', min: 0, max: 5, step: 0.1 },
+  { group: 'Customs', path: 'bridePriceHerd', label: 'Bridewealth in livestock', min: 0, max: 20, step: 1 },
+  { group: 'Customs', path: 'dowry', label: 'Dowry (years of surplus)', min: 0, max: 5, step: 0.1 },
+  { group: 'Customs', path: 'brideServiceYears', label: 'Years of bride-service', min: 0, max: 15, step: 1 },
+  { group: 'Customs', path: 'bloodPrice', label: 'Blood money (years of surplus)', min: 0, max: 6, step: 0.1 },
+  { group: 'Customs', path: 'feudRevenge', label: 'Unpaid killings avenged', min: 0, max: 1, step: 0.05 },
+  { group: 'Customs', path: 'feastFrac', label: 'Surplus given at feasts', min: 0, max: 1, step: 0.05 },
+  { group: 'Customs', path: 'feastWaste', label: 'Share of a feast destroyed', min: 0, max: 1, step: 0.05 },
+  { group: 'Customs', path: 'fluidMove', label: 'Families moving between open bands', min: 0, max: 0.1, step: 0.002 },
   { group: 'Culture', path: 'inventBase', label: 'Invention rate', min: 0, max: 0.03, step: 0.0005 },
   { group: 'Culture', path: 'driftRate', label: 'Rule drift per gene per year', min: 0, max: 0.02, step: 0.0005 },
   { group: 'Culture', path: 'imitateRate', label: 'Imitating a richer neighbour', min: 0, max: 0.2, step: 0.005 },

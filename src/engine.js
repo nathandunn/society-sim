@@ -3,7 +3,7 @@
 // gene change and tech change is logged with its cause and contributing factors.
 
 import { DEFAULT_PARAMS, TECHS, DOMAINS, CAUSES, MODEL_VERSION } from './params.js';
-import { GENES, GENE_KEYS, mutateGene, cloneGenome } from './genome.js';
+import { GENES, GENE_KEYS, mutateGene, cloneGenome, withDefaults } from './genome.js';
 import { buildWorld, ENVIRONMENTS } from './world.js';
 
 export function mulberry32(seed) {
@@ -70,6 +70,7 @@ export function runSim(cfg) {
       lastBirth: -99, kids: [], matriline: o.matriline || 0, patriline: o.patriline || 0,
       ancestry: o.ancestry || new Array(nFounders).fill(0), freedYear: o.freedYear ?? null, imm: null,
       foodRatio: 1, activity: null, raided: false, origin: o.soc, wealth: 0, wealthRank: 0,
+      prestige: 0, prestigeRank: 0, savings: 0, serviceUntil: -1, patron: 0,
     };
     if (!p.matriline) p.matriline = p.id;
     if (!p.patriline) p.patriline = p.id;
@@ -83,11 +84,11 @@ export function runSim(cfg) {
   const societies = [];
   function makeSociety(genome, name, home, parent = null) {
     const s = {
-      id: societies.length, name, color: parent !== null ? societies[parent].color : COLORS[societies.length % COLORS.length], genome: cloneGenome(genome),
+      id: societies.length, name, color: parent !== null ? societies[parent].color : COLORS[societies.length % COLORS.length], genome: cloneGenome(withDefaults(genome)),
       home, alive: true, techs: new Set(), stores: new Map(), grievance: {}, trust: {}, tradeLink: {},
       leader: 0, cohesionPenalty: 0, lastRaidYear: -99, lastPressure: {}, parent, founded: 0, ended: null,
       endReason: null, popHistory: [], epidemicThisYear: false, foodRatio: 1, tradeBonus: 0, pendingStrains: [], outbreakStrain: null,
-      ritualLogged: genome.ritual, herds: new Map(), prod: {}, farmShare: 0, herdShare: 0, sedentary: false, graze: 1, tribute: 0,
+      ritualLogged: genome.ritual, herds: new Map(), prod: {}, farmShare: 0, herdShare: 0, sedentary: false, graze: 1, tribute: 0, mourn: 0, lastSet: 0,
     };
     societies.push(s);
     return s;
@@ -188,6 +189,37 @@ export function runSim(cfg) {
     return 'i' + headOf(p, g).id;
   }
   const canUse = (p, s, key) => key === 'all' || key === 'ruler' || key === ownerKey(p, s);
+  const rootOf = s => s.root || s.name;
+  const isWarrior = (p, s, y) => s.genome.ageSets === 'warriors' && p.sex === 'M' && p.status === 'free' && age(p, y) >= 15 && age(p, y) < 30;
+  const fullBrothers = (m, s) => m.father && m.mother ? members(s).filter(b => b.id !== m.id && b.sex === 'M' && b.father === m.father && b.mother === m.mother) : [];
+  const herdTotal = s => [...s.herds.values()].reduce((a, b) => a + b, 0);
+  // marriage payments and blood money: herd-keepers pay in livestock, others in saved valuables (pigs, shells, hides)
+  function pay(s, from, to, units, herdUnits) {
+    if (herdTotal(s) > 1 && herdUnits) {
+      const fk = ownerKey(from, s), have = s.herds.get(fk) || 0;
+      if (have >= herdUnits) {
+        s.herds.set(fk, have - herdUnits);
+        if (to) { const tk = ownerKey(to, s); s.herds.set(tk, (s.herds.get(tk) || 0) + herdUnits); }
+        return 'herd';
+      }
+    }
+    if (from.savings >= units) { from.savings -= units; if (to) to.savings += units; return 'valuables'; }
+    return null;
+  }
+  function settleKilling(s, killer, victim, y) {
+    // the killer's kin pay blood money to the victim's kin; if they cannot, the victim's kin take a life
+    const kin = members(s).filter(q => q.alive && q.sex === 'M' && age(q, y) >= 16 && lineKey(q, s.genome) === lineKey(killer, s.genome));
+    const payer = [killer, ...kin].find(q => q.alive && (q.savings >= P.bloodPrice || (s.herds.get(ownerKey(q, s)) || 0) >= P.bloodPriceHerd));
+    const heir = byId.get(victim.father) || byId.get(victim.mother) || aliveSpouses(victim).map(id => byId.get(id))[0] || null;
+    if (payer && pay(s, payer, heir && heir.alive ? heir : null, P.bloodPrice, P.bloodPriceHerd)) {
+      log({ y, t: 'bloodMoney', soc: s.id, who: payer.id, victim: victim.id });
+      return;
+    }
+    if (R() < P.feudRevenge) {
+      const target = kin.length && R() < 0.6 ? pick(kin) : killer;
+      if (target.alive) { kill(target, y, 'feud', ['revenge for ' + victim.id, 'no blood money']); log({ y, t: 'feud', soc: s.id, who: target.id, victim: victim.id }); }
+    }
+  }
   // ---------- Contagious disease ----------
   const strains = [];
   const KINDS = {
@@ -268,13 +300,18 @@ export function runSim(cfg) {
   function farmMult(s) { return has(s, 'irrigation') ? 1.25 : 1; }
   function herdMult(s) { return has(s, 'dairying') ? 1.2 : 1; }
   function decayOf(s) {
+    if (s.genome.storage === 'none') return 1;
+    if (s.genome.storage === 'big') return 0.6 * decayOfBase(s);
+    return decayOfBase(s);
+  }
+  function decayOfBase(s) {
     const base = has(s, 'pottery') ? 0.2 : has(s, 'smoking') ? 0.3 : P.storeDecay;
     return s.farmShare > 0.3 ? Math.min(base, has(s, 'granary') ? 0.12 : 0.25) : base; // grain keeps
   }
   function cohesionOf(s) {
     const g = s.genome;
-    const gov = { anarchy: 0, democracy: 0.2, chief: 0.1, totalitarian: 0.15 }[g.governance];
-    return clamp(g.ritual * 0.5 + gov + 0.15 - s.cohesionPenalty, 0, 1);
+    const gov = { anarchy: 0, democracy: 0.2, chief: 0.1, totalitarian: 0.15, bigman: 0.1, elders: 0.2, clanMothers: 0.2, segmentary: 0.05 }[g.governance];
+    return clamp(g.ritual * 0.5 + gov + 0.15 + (g.ageSets === 'warriors' ? 0.05 : 0) - s.cohesionPenalty, 0, 1);
   }
   function isRelated(a, b) {
     if (a.id === b.id) return true;
@@ -287,7 +324,9 @@ export function runSim(cfg) {
     return false;
   }
   function status(p, s) {
-    return 0.4 * (p.skill.hunt + p.skill.fight) / 2 + 0.2 * p.flair + 0.2 * (s.leader === p.id ? 1 : 0) + 0.1 * p.aggr + 0.3 * (p.wealthRank || 0);
+    const pr = s.genome.prestige;
+    const rank = pr === 'feast' ? (p.prestigeRank || 0) : pr === 'level' ? 0 : (p.wealthRank || 0); // levelling: wealth earns no standing
+    return 0.4 * (p.skill.hunt + p.skill.fight) / 2 + 0.2 * p.flair + 0.2 * (s.leader === p.id ? 1 : 0) + 0.1 * p.aggr + 0.3 * rank;
   }
   function kill(p, y, cause, factors = [], extra = {}) {
     if (!p.alive) return;
@@ -329,6 +368,7 @@ export function runSim(cfg) {
   function fightPower(p, s, attack) {
     let f = 0.5 + p.skill.fight;
     f *= 1 + (has(s, 'spear') ? 0.15 : 0) + (has(s, 'bow') ? 0.3 : 0);
+    if (isWarrior(p, s, curYear)) f *= 1.15; // a standing warrior grade drills together
     if (!attack && has(s, 'shields')) f *= 1.15;
     if (attack && has(s, 'shields')) f *= 1.07;
     if (p.sex === 'F') f *= 0.85;
@@ -439,8 +479,35 @@ export function runSim(cfg) {
             }
           }
         }
+      } else if (g.governance === 'bigman') {
+        // a Big Man leads by the following his feasts and loans have bought; when he dies it lapses
+        const cur = byId.get(s.leader);
+        if (s.leader && (!cur || !cur.alive || cur.soc !== s.id)) {
+          log({ y, t: 'lapse', soc: s.id, who: s.leader }); s.leader = 0; s.cohesionPenalty += 0.1;
+          members(s).forEach(p => { if (p.patron === cur?.id) p.patron = 0; });
+        } else {
+          const top = members(s).filter(p => p.status === 'free' && p.sex === 'M' && age(p, y) >= 28 && age(p, y) <= 65).sort((a, b) => b.prestige - a.prestige)[0];
+          if (top && top.id !== s.leader && top.prestige > 1 && (!cur || top.prestige > cur.prestige * 1.25)) {
+            log({ y, t: 'bigman', soc: s.id, who: top.id, prestige: +top.prestige.toFixed(1), from: s.leader || null }); s.leader = top.id;
+          }
+        }
+      } else if (g.governance === 'elders') {
+        const top = members(s).filter(p => p.status === 'free' && p.sex === 'M' && age(p, y) >= 45).sort((a, b) => a.born - b.born)[0];
+        s.leader = top?.id || 0;
+      } else if (g.governance === 'clanMothers') {
+        // the senior women of the largest clan name the sachem; the head clan mother stands for them
+        const ms = members(s), size = new Map();
+        ms.forEach(p => size.set(p.matriline, (size.get(p.matriline) || 0) + 1));
+        const top = ms.filter(p => p.sex === 'F' && p.status === 'free' && age(p, y) >= 40).sort((a, b) => (size.get(b.matriline) - size.get(a.matriline)) || (a.born - b.born))[0];
+        s.leader = top?.id || 0;
       } else s.leader = 0;
       s.cohesionPenalty = Math.max(0, s.cohesionPenalty * 0.85);
+      s.mourn *= 0.8;
+      if (g.ageSets === 'warriors' && y - s.lastSet >= 15) {
+        s.lastSet = y;
+        const boys = members(s).filter(p => p.sex === 'M' && age(p, y) >= 15 && age(p, y) < 30).length;
+        log({ y, t: 'ageSet', soc: s.id, warriors: boys });
+      }
     }
 
     // --- foraging, farming, herding ---
@@ -467,7 +534,7 @@ export function runSim(cfg) {
       const herding = has(s, 'herding');
       const untended = new Map(s.herds);
       const pool = g.sharing === 'household' ? 0 : g.sharing === 'kin' ? 0.4 : g.sharing === 'ruler' ? 0.8 : 1;
-      const enforce = { gossip: 0.3, fines: 0.6, violence: 0.75, exile: 0.65 }[g.enforcement];
+      const enforce = { gossip: 0.3, fines: 0.6, violence: 0.75, exile: 0.65, feud: 0.55 }[g.enforcement];
       const cohesion = cohesionOf(s);
       for (const p of ms) {
         p.harvest = 0; p.activity = null; p.raided = false;
@@ -558,6 +625,11 @@ export function runSim(cfg) {
           }
         }
         if (g.property === 'ruler' && (choice.act === 'farm' || choice.act === 'herd') && p.id !== s.leader) { const tr = got * 0.25; s.tribute += tr; got -= tr; }
+        // saving for marriage payments: pigs raised, cattle kept back, valuables made
+        if (g.marriagePayment === 'bridewealth' || g.marriagePayment === 'dowry') {
+          const sur = Math.max(0, got - P.adultNeed);
+          if (sur > 0 && p.status !== 'slave') { const sv = sur * P.saveFrac; got -= sv; p.savings = Math.min(P.savingsCap, p.savings + sv / P.adultNeed); }
+        }
         p.harvest = got; p.activity = choice.act; s.prod[choice.act] += got;
       }
       if (s.tradeBonus) ms.forEach(p => { if (p.harvest) p.harvest *= 1 + s.tradeBonus; });
@@ -609,6 +681,11 @@ export function runSim(cfg) {
       });
       const sorted = ms.slice().sort((a, b) => a.wealth - b.wealth);
       sorted.forEach((p, i) => { p.wealthRank = sorted.length > 1 ? i / (sorted.length - 1) : 0; });
+      if (s.genome.prestige === 'feast') {
+        ms.forEach(p => { p.prestige *= 0.85; });
+        const sp = ms.slice().sort((a, b) => a.prestige - b.prestige);
+        sp.forEach((p, i) => { p.prestigeRank = sp.length > 1 && sp[sp.length - 1].prestige > 0 ? i / (sp.length - 1) : 0; });
+      }
       const sd = ensureSeries(s);
       sd.wealthGini[y] = +gini(ms.map(p => p.wealth)).toFixed(3);
     }
@@ -648,7 +725,31 @@ export function runSim(cfg) {
           const ws = aliveSpouses(p).map(id => byId.get(id)).filter(w => w.soc === s.id);
           if (ws.length > 1) { ws.forEach(w => groups.get(keyOf(w)).food += p.harvest / ws.length); continue; }
         }
+        if (p.serviceUntil >= y) {
+          // bride-service: a new husband hunts for his wife's parents for some years
+          const w = aliveSpouses(p).map(id => byId.get(id)).find(z => z.soc === s.id);
+          const mil = w && byId.get(w.mother);
+          if (mil && mil.alive && mil.soc === s.id) { const part = p.harvest * P.brideServiceShare; groups.get(keyOf(mil)).food += part; groups.get(keyOf(p)).food += p.harvest - part; continue; }
+        }
         groups.get(keyOf(p)).food += p.harvest;
+      }
+      // feasting: those with surplus give it away for standing; part is destroyed in display (potlatch)
+      if (g.prestige === 'feast') {
+        let feast = 0;
+        for (const p of ms) {
+          const sur = (p.harvest || 0) - needOf(p, y) * 1.1;
+          if (sur <= 0 || age(p, y) < 18) continue;
+          const give = sur * P.feastFrac;
+          groups.get(keyOf(p)).food -= give;
+          feast += give * (1 - P.feastWaste);
+          p.prestige += give / P.adultNeed;
+          if (s.leader && s.leader !== p.id && p.patron === s.leader) { const L = byId.get(s.leader); if (L) L.prestige += give / P.adultNeed * 0.25; } // a follower's gifts raise his patron
+        }
+        if (feast > 0) {
+          const totNeedF = [...groups.values()].reduce((t, gr) => t + gr.need, 0) || 1;
+          for (const gr of groups.values()) gr.food += feast * gr.need / totNeedF;
+          s.cohesionPenalty = Math.max(0, s.cohesionPenalty - 0.01);
+        }
       }
       if (s.tribute) {
         const L = byId.get(s.leader);
@@ -664,12 +765,13 @@ export function runSim(cfg) {
       }
       // demand sharing: groups in surplus pass part of it to hungry groups in the same camp
       if (groups.size > 1) {
-        const share = g.sharing === 'household' ? 0.15 : 0.3;
+        const share = (g.sharing === 'household' ? 0.15 : 0.3) + (g.prestige === 'level' ? 0.2 : 0); // levelling: the lucky are made to give more
         let pot = 0;
         for (const [k, gr] of groups) { const av = gr.food + (s.stores.get(k) || 0); if (av > gr.need) { const give = (av - gr.need) * share; gr.food -= give; pot += give; } }
         const short = [...groups.values()].filter(gr => gr.food + 0 < gr.need);
         const gap = short.reduce((t, gr) => t + (gr.need - gr.food), 0);
-        if (gap > 0) short.forEach(gr => gr.food += pot * (gr.need - gr.food) / gap);
+        if (gap > 0) { const used = Math.min(pot, gap); short.forEach(gr => gr.food += used * (gr.need - gr.food) / gap); pot -= used; }
+        if (pot > 0) { const tn = [...groups.values()].reduce((t, gr) => t + gr.need, 0) || 1; for (const gr of groups.values()) gr.food += pot * gr.need / tn; }
       }
       for (const [k, gr] of groups) {
         const stored = s.stores.get(k) || 0;
@@ -710,7 +812,8 @@ export function runSim(cfg) {
       if (!list.length) { s.stores.set(key, avail * (1 - decayOf(s))); return; }
       if (avail >= need) {
         list.forEach(p => { p.foodRatio = 1; ratios.push(1); });
-        s.stores.set(key, Math.min(need * 1.5, (avail - need) * (1 - decayOf(s))));
+        const cap = { none: 0, kept: 1.5, big: 3 }[g.storage];
+        s.stores.set(key, Math.min(need * cap, (avail - need) * (1 - decayOf(s))));
         return;
       }
       s.stores.set(key, 0);
@@ -743,7 +846,7 @@ export function runSim(cfg) {
             const dad = byId.get(p.father);
             if (dad && dad.alive && dad.soc === p.soc) {
               const wives = aliveSpouses(dad).length;
-              const care = { monogamy: 0.85, serial: 0.88, polyandry: 0.84, polygyny: 0.84 + 0.04 * Math.max(0, wives - 1), open: 0.95 }[g.marriage];
+              const care = { monogamy: 0.85, serial: 0.88, polyandry: 0.84, polygyny: 0.84 + 0.04 * Math.max(0, wives - 1), fraternal: 0.8, open: 0.95 }[g.marriage];
               hInf *= care;
             } else { hInf *= 1.08; f.push('fatherless'); }
             const mom = byId.get(p.mother);
@@ -792,26 +895,50 @@ export function runSim(cfg) {
       if (s.sedentary && R() < P.disease.spillCrowd * s.farmShare * ms.length / 200) { const st = spillover('crowd', y); if (!seen.has(st.id)) { seen.add(st.id); outbreak(s, st, y, 'bred in crowded villages'); } }
     }
 
+    // --- fluid membership: families drift to camps that are eating better, and visit kin bands ---
+    for (const s of live) {
+      if (s.genome.membership !== 'fluid' || !s.alive) continue;
+      const dests = societies.filter(o => o.alive && o !== s && o.genome.membership !== 'closed' && o.genome.outgroup !== 'xenophobic' && inContact(s, o) &&
+        (o.grievance[s.id] || 0) < 0.8 && members(o).length);
+      if (!dests.length) continue;
+      const moved = new Map();
+      for (const p of members(s).slice()) {
+        if (!p.alive || p.soc !== s.id || p.status !== 'free' || age(p, y) < 16) continue;
+        if (p.sex === 'M' && aliveSpouses(p).some(id => byId.get(id)?.soc === s.id)) continue; // families move with the wife
+        const d = pick(dests);
+        const gain = (d.meanRatio || 1) - (s.meanRatio || 1);
+        const pm = P.fluidMove * (rootOf(d) === rootOf(s) ? 1 : 0.4) + Math.max(0, gain) * P.fluidHunger;
+        if (R() >= pm) continue;
+        const fam = [p, ...aliveSpouses(p).map(id => byId.get(id)).filter(q => q && q.soc === s.id), ...p.kids.map(id => byId.get(id)).filter(k => k && k.alive && k.soc === s.id && age(k, y) < 14)];
+        fam.forEach(q => setSoc(q, d.id));
+        moved.set(d.id, (moved.get(d.id) || 0) + fam.length);
+      }
+      for (const [to, n] of moved) log({ y, t: 'migrate', soc: s.id, to, n });
+    }
+
     // --- internal violence, enforcement, slaves ---
     for (const s of live) {
       const g = s.genome, ms = members(s);
-      const adultMen = ms.filter(p => p.sex === 'M' && age(p, y) >= 20 && age(p, y) <= 45 && p.status !== 'slave');
+      const marryAge = g.ageSets === 'warriors' ? 30 : g.menMarry === 'late' ? P.maleMarryLate : 20; // young bachelors where men marry late are not yet losers in the marriage market
+      const adultMen = ms.filter(p => p.sex === 'M' && age(p, y) >= Math.max(20, marryAge) && age(p, y) <= 45 && p.status !== 'slave');
       const unpaired = adultMen.filter(p => aliveSpouses(p).length === 0);
       const upFrac = adultMen.length ? unpaired.length / adultMen.length : 0;
       s.unpairedFrac = g.marriage === 'open' ? 0 : upFrac;
       ensureSeries(s).unpaired[y] = +s.unpairedFrac.toFixed(3);
       if (g.marriage !== 'open') for (const p of unpaired) {
-        if (R() < P.unpairedViolence * upFrac * 3 * (0.5 + p.aggr)) {
+        if (R() < P.unpairedViolence * upFrac * 3 * (0.5 + p.aggr) * (g.enforcement === 'feud' ? 0.7 : 1)) { // the threat of a feud restrains
           const rival = adultMen.filter(q => q.alive && q.id !== p.id);
-          const victim = R() < 0.5 || !rival.length ? p : pick(rival);
+          const other = rival.length ? pick(rival) : null;
+          const victim = R() < 0.5 || !other ? p : other, killer = victim === p ? other : p;
           kill(victim, y, 'mate fight', ['unpaired men ' + Math.round(upFrac * 100) + '%']);
+          if (g.enforcement === 'feud' && killer) settleKilling(s, killer, victim, y);
         }
       }
       const low = ms.filter(p => p.alive && age(p, y) >= 16 && p.coop < 0.28 && p.status === 'free');
       if (g.enforcement === 'violence') low.forEach(p => { if (R() < 0.01) kill(p, y, 'punishment', ['free-rider']); });
       if (g.enforcement === 'exile') low.forEach(p => {
         if (R() < 0.03) {
-          const dest = societies.filter(o => o.alive && o.id !== s.id && o.genome.outgroup !== 'xenophobic' && inContact(s, o));
+          const dest = societies.filter(o => o.alive && o.id !== s.id && o.genome.outgroup !== 'xenophobic' && o.genome.membership !== 'closed' && inContact(s, o));
           if (dest.length && R() < 0.6) { const d = pick(dest); setSoc(p, d.id); log({ y, t: 'exile', soc: s.id, to: d.id, who: p.id }); }
           else kill(p, y, 'accident', ['exiled']);
         }
@@ -819,7 +946,7 @@ export function runSim(cfg) {
       // totalitarian defection
       if (g.governance === 'totalitarian') ms.filter(p => p.alive && p.status === 'free' && age(p, y) >= 16 && age(p, y) < 50).forEach(p => {
         if (R() < P.defection * (1 - cohesionOf(s))) {
-          const dest = societies.filter(o => o.alive && o.id !== s.id && o.genome.outgroup !== 'xenophobic' && inContact(s, o));
+          const dest = societies.filter(o => o.alive && o.id !== s.id && o.genome.outgroup !== 'xenophobic' && o.genome.membership !== 'closed' && inContact(s, o));
           if (dest.length) { const d = pick(dest); setSoc(p, d.id); aliveSpouses(p).forEach(() => {}); log({ y, t: 'defect', soc: s.id, to: d.id, who: p.id }); }
         }
       });
@@ -852,17 +979,56 @@ export function runSim(cfg) {
           if (R() < 0.04) { const h = byId.get(aliveSpouses(w)[0]); w.spouses = []; if (h) h.spouses = h.spouses.filter(id => id !== w.id); }
         });
       }
+      const fraternal = g.marriage === 'fraternal';
       const maxW = g.marriage === 'polyandry' ? 2 : 1;
+      const menFrom = g.ageSets === 'warriors' ? 30 : g.menMarry === 'late' ? P.maleMarryLate : P.maleMarryFrom; // warriors may not marry
       const women = ms.filter(p => p.sex === 'F' && age(p, y) >= P.femaleMarryFrom && age(p, y) <= 45 && aliveSpouses(p).length < maxW);
-      const menAll = ms.filter(p => p.sex === 'M' && age(p, y) >= P.maleMarryFrom && age(p, y) <= 65);
-      const ranked = menAll.slice().sort((a, b) => status(b, s) - status(a, s));
+      let menAll = ms.filter(p => p.sex === 'M' && age(p, y) >= menFrom && age(p, y) <= 65);
+      if (fraternal) {
+        // a younger brother coming of age joins his elder brothers' wife; only the eldest unwed brother seeks a bride
+        for (const m of menAll) {
+          if (aliveSpouses(m).length) continue;
+          const wife = fullBrothers(m, s).flatMap(b => aliveSpouses(b)).map(id => byId.get(id)).find(w => w && w.alive && w.soc === s.id && !isRelated(w, m));
+          if (wife && R() < 0.8) wed(wife, m, y);
+        }
+        menAll = menAll.filter(m => !aliveSpouses(m).length && !fullBrothers(m, s).some(b => b.born < m.born && age(b, y) >= menFrom && !aliveSpouses(b).length));
+      }
+      const ranked = menAll.slice().sort((a, b) => g.governance === 'elders' ? a.born - b.born : status(b, s) - status(a, s)); // under elders' rule wives go to the old
+      const rankOf = new Map(ranked.map((m, i) => [m.id, i]));
       const capOf = (m) => {
         if (g.marriage !== 'polygyny') return 1;
         if (m.id === s.leader) return P.polygynyMaxWives + 2;
-        const r = ranked.indexOf(m) / Math.max(1, ranked.length);
-        return 1 + Math.floor((1 - r) * (1 - r) * (P.polygynyMaxWives - 1) + 0.25);
+        const r = (rankOf.get(m.id) ?? ranked.length) / Math.max(1, ranked.length);
+        const c = 1 + Math.floor((1 - r) * (1 - r) * (P.polygynyMaxWives - 1) + 0.25);
+        return g.prestige === 'level' ? Math.min(2, c) : c;
       };
       const pMarry = g.mateChoice === 'free' ? 0.55 : 0.8;
+      // the price of a wife: bridewealth from the groom's side, a dowry from the bride's, or years of service
+      const settle = (w, m) => {
+        const mp = g.marriagePayment;
+        if (mp === 'bridewealth') {
+          const to = byId.get(w.father); const recv = to && to.alive && to.soc === w.soc ? to : null;
+          // the groom's kin pool the bridewealth: himself, then his father, then his brothers
+          const kin = [m, byId.get(m.father), ...fullBrothers(m, s)].filter(q => q && q.alive && q.soc === s.id);
+          for (const q of kin) if (pay(s, q, recv, P.bridePrice, P.bridePriceHerd)) return true;
+          const L = byId.get(s.leader);
+          if (g.governance === 'bigman' && L && L.alive && L.id !== m.id && L.soc === s.id && pay(s, L, recv, P.bridePrice, P.bridePriceHerd)) {
+            m.patron = L.id; L.prestige += 1; // the Big Man pays and gains a debtor
+            log({ y, t: 'patron', soc: s.id, who: L.id, groom: m.id });
+            return true;
+          }
+          if (R() < P.brideCredit) { m.savings -= P.bridePrice; if (recv) recv.savings += P.bridePrice * 0.5; return true; } // promised: paid off over the years
+          return false;
+        }
+        if (mp === 'dowry') {
+          const fa = byId.get(w.father), mo = byId.get(w.mother);
+          const giver = [fa, mo].find(q => q && q.alive && q.soc === w.soc && (q.savings >= P.dowry || (s.herds.get(ownerKey(q, s)) || 0) >= P.dowryHerd));
+          if (giver && pay(s, giver, m, P.dowry, P.dowryHerd)) return true;
+          return R() < 0.3; // a dowerless bride marries only by luck
+        }
+        if (mp === 'brideservice') m.serviceUntil = y + P.brideServiceYears;
+        return true;
+      };
       // ruler picks first
       if (g.mateChoice === 'ruler' && s.leader) {
         const L = byId.get(s.leader);
@@ -876,11 +1042,13 @@ export function runSim(cfg) {
         if (R() > pMarry) continue;
         // intermarriage
         const others = societies.filter(o => o.alive && o.id !== s.id && o.genome.outgroup !== 'xenophobic' && g.outgroup !== 'xenophobic' && inContact(s, o) &&
+          o.genome.membership !== 'closed' && g.membership !== 'closed' &&
           (s.grievance[o.id] || 0) < 1 && (o.grievance[s.id] || 0) < 1);
         let pool = menAll, foreign = null;
         if (others.length && R() < (g.outgroup === 'open' ? 0.08 : 0.03)) {
           foreign = pick(others);
-          pool = members(foreign).filter(p => p.sex === 'M' && age(p, y) >= P.maleMarryFrom && age(p, y) <= 65);
+          const fg = foreign.genome, fFrom = fg.ageSets === 'warriors' ? 30 : fg.menMarry === 'late' ? P.maleMarryLate : P.maleMarryFrom;
+          pool = members(foreign).filter(p => p.sex === 'M' && age(p, y) >= fFrom && age(p, y) <= 65 && (fg.marriage !== 'fraternal' || !aliveSpouses(p).length));
         }
         const elig = pool.filter(m => aliveSpouses(m).length < (foreign ? 1 : capOf(m)) && !isRelated(w, m) && !aliveSpouses(w).includes(m.id));
         if (!elig.length) continue;
@@ -890,7 +1058,9 @@ export function runSim(cfg) {
           m = sample.sort((a, b) => status(b, societies[b.soc]) - status(a, societies[a.soc]))[0];
         } else if (g.mateChoice === 'ruler') m = elig.slice().sort((a, b) => status(b, s) - status(a, s))[Math.floor(R() * Math.min(3, elig.length))];
         else m = pick(elig);
+        if (!foreign && !settle(w, m)) continue;
         wed(w, m, y);
+        if (fraternal && !foreign) fullBrothers(m, s).filter(b => age(b, y) >= menFrom && !aliveSpouses(b).length && !isRelated(w, b)).forEach(b => wed(w, b, y));
         if (foreign) {
           const res = g.residence === 'free' ? (R() < 0.5 ? 'matrilocal' : 'patrilocal') : g.residence;
           const mover = res === 'matrilocal' ? m : w;
@@ -966,7 +1136,12 @@ export function runSim(cfg) {
         let pressure = 1.6 * Math.max(0, 1 - A.meanRatio) + 0.35 * (A.grievance[B.id] || 0) + 2 * (A.unpairedFrac || 0) +
           { xenophobic: 0.4, neutral: 0.15, open: 0 }[gA.outgroup] + clamp(strA / strB - 1, -1, 2) * 0.4 +
           meanAggr * 0.3 - (A.trust[B.id] || 0) * 0.5;
-        if (L && (gA.governance === 'chief' || gA.governance === 'totalitarian')) pressure += (L.aggr - 0.5) * 0.8;
+        if (L && (gA.governance === 'chief' || gA.governance === 'totalitarian' || gA.governance === 'bigman')) pressure += (L.aggr - 0.5) * 0.8;
+        if (gA.governance === 'clanMothers') pressure += 0.2 * Math.min(4, A.mourn) - 0.1; // mourning war: the clan mothers ask for captives to replace their dead
+        if (gA.governance === 'elders') pressure -= 0.1;
+        if (gA.ageSets === 'warriors') pressure += 0.2; // young men win cattle and standing by raiding
+        const kinSeg = gA.governance === 'segmentary' && B.genome.governance === 'segmentary' && rootOf(A) === rootOf(B);
+        if (kinSeg) pressure -= 0.5; // segments of one people settle quarrels with blood money, not raids
         if (gA.governance === 'totalitarian') pressure += 0.3;
         const herdPer = x => [...x.herds.values()].reduce((a, b) => a + b, 0) / Math.max(1, members(x).length);
         if (herdPer(B) > 1 && herdPer(B) > herdPer(A) * 1.2) pressure += 0.35; // livestock envy
@@ -979,18 +1154,27 @@ export function runSim(cfg) {
         let party;
         const sorted = fa.slice().sort((a, b) => b.skill.fight - a.skill.fight);
         if (gA.governance === 'anarchy') party = sorted.filter(p => p.aggr > 0.5).slice(0, 3 + Math.floor(R() * 4));
-        else party = sorted.slice(0, Math.max(2, Math.round(fa.length * { democracy: 0.35, chief: 0.5, totalitarian: 0.8 }[gA.governance])));
+        else party = sorted.slice(0, Math.max(2, Math.round(fa.length * { democracy: 0.35, chief: 0.5, totalitarian: 0.8, bigman: 0.4, elders: 0.5, clanMothers: 0.45, segmentary: 0.5 }[gA.governance])));
+        if (gA.ageSets === 'warriors') { const ids = new Set(party.map(p => p.id)); fa.forEach(p => { if (isWarrior(p, A, y) && !ids.has(p.id)) party.push(p); }); }
+        // segmentary opposition: brother segments join a raid on outsiders
+        const allies = (X, Y) => X.genome.governance !== 'segmentary' ? [] : societies.filter(o => o.alive && o !== X && o !== Y && o.genome.governance === 'segmentary' &&
+          rootOf(o) === rootOf(X) && rootOf(o) !== rootOf(Y) && canRaid(o, Y)).flatMap(o => fightersOf(o, y).filter(() => R() < 0.3).map(p => ({ p, o })));
+        const allyA = kinSeg ? [] : allies(A, B);
         if (party.length < 2) continue;
         const cohA = cohesionOf(A), cohB = cohesionOf(B);
-        const att = party.reduce((t, p) => t + fightPower(p, A, true), 0) * (1 + cohA * 0.3 + 0.25 + (has(A, 'ambush') ? 0.25 : 0));
+        const att = (party.reduce((t, p) => t + fightPower(p, A, true), 0) + allyA.reduce((t, a) => t + fightPower(a.p, a.o, true), 0)) * (1 + cohA * 0.3 + 0.25 + (has(A, 'ambush') ? 0.25 : 0));
         const defenders = fb.filter(() => R() < 0.7);
-        const def = Math.max(0.3, defenders.reduce((t, p) => t + fightPower(p, B, false), 0)) *
+        const allyB = kinSeg ? [] : allies(B, A);
+        const def = Math.max(0.3, defenders.reduce((t, p) => t + fightPower(p, B, false), 0) + allyB.reduce((t, a) => t + fightPower(a.p, a.o, false), 0)) *
           (1 + (has(B, 'palisade') ? 0.5 : 0) + (B.genome.foraging === 'territorial' ? 0.2 : 0) + cohB * 0.3);
         const win = R() < Math.pow(att, 1.5) / (Math.pow(att, 1.5) + Math.pow(def, 1.5));
         const wcA = has(A, 'woundCare') ? 0.7 : 1, wcB = has(B, 'woundCare') ? 0.7 : 1;
         let dA = 0, dB = 0;
         party.forEach(p => { p.raided = true; if (R() < (win ? P.casualtyWinner : P.casualtyLoser) * wcA) { kill(p, y, 'raid', ['raiding ' + B.name], { by: B.id }); dA++; } });
         defenders.forEach(p => { if (R() < (win ? P.casualtyLoser : P.casualtyWinner) * wcB) { kill(p, y, 'raid', ['defending vs ' + A.name], { by: A.id }); dB++; } });
+        allyA.forEach(({ p, o }) => { if (R() < (win ? P.casualtyWinner : P.casualtyLoser) * 0.7) { kill(p, y, 'raid', ['with ' + A.name + ' against ' + B.name], { by: B.id }); o.mourn += 1; } });
+        allyB.forEach(({ p, o }) => { if (R() < (win ? P.casualtyLoser : P.casualtyWinner) * 0.7) { kill(p, y, 'raid', ['with ' + B.name + ' against ' + A.name], { by: A.id }); o.mourn += 1; } });
+        if (allyA.length || allyB.length) log({ y, t: 'alliance', soc: allyA.length ? A.id : B.id, n: allyA.length || allyB.length, against: allyA.length ? B.id : A.id });
         let taken = 0, stolen = 0, rustledThis = 0;
         if (win) {
           members(B).forEach(p => { if (R() < 0.03) { kill(p, y, 'raid', ['camp raided by ' + A.name], { by: A.id }); dB++; } });
@@ -1019,6 +1203,7 @@ export function runSim(cfg) {
             taken++;
           }
         }
+        A.mourn += dA; B.mourn += dB;
         A.grievance[B.id] = (A.grievance[B.id] || 0) + dA * 0.15;
         B.grievance[A.id] = (B.grievance[A.id] || 0) + 1 + dB * 0.2 + taken * 0.3;
         A.trust[B.id] = 0; B.trust[A.id] = 0; A.tradeLink[B.id] = 0; B.tradeLink[A.id] = 0;
@@ -1094,6 +1279,7 @@ export function runSim(cfg) {
         if (p.activity) { const d = p.activity === 'hunt' ? 'hunt' : p.activity; p.skill[d] += 0.06 * (1 - p.skill[d]); }
         if (p.raided) p.skill.fight += 0.08 * (1 - p.skill.fight);
         if (a >= 16 && a <= 40 && p.sex === 'M' && p.status === 'free') p.skill.fight += 0.02 * (1 - p.skill.fight);
+        if (isWarrior(p, s, y)) p.skill.fight += 0.03 * (1 - p.skill.fight);
       }
       const healers = ms.filter(p => age(p, y) >= 16 && (g.labour !== 'bySex' || p.sex === 'F' || age(p, y) >= 50)).sort((a, b) => b.skill.heal - a.skill.heal).slice(0, 2);
       healers.forEach(p => p.skill.heal += 0.05 * (1 - p.skill.heal));
@@ -1112,7 +1298,7 @@ export function runSim(cfg) {
       }
       const sd = ensureSeries(s);
       DOMAINS.forEach(d => sd.skill[d][y] = +L[d].toFixed(3));
-      const innov = { anarchy: 1, democracy: 1.15, chief: 0.9, totalitarian: 0.6 }[g.governance];
+      const innov = { anarchy: 1, democracy: 1.15, chief: 0.9, totalitarian: 0.6, bigman: 1.05, elders: 0.85, clanMothers: 1, segmentary: 1 }[g.governance];
       const migFrac = ms.length ? ms.filter(p => p.origin !== s.id).length / ms.length : 0;
       for (const [t, spec] of Object.entries(TECHS)) {
         if (s.techs.has(t)) {

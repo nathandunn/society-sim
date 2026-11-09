@@ -2,7 +2,7 @@
 // Each gene is either an enum (array of values) or a dial (0..1).
 
 export const GENES = {
-  marriage:    { kind: 'enum', values: ['monogamy', 'serial', 'polygyny', 'polyandry', 'open'],
+  marriage:    { kind: 'enum', values: ['monogamy', 'serial', 'polygyny', 'polyandry', 'fraternal', 'open'],
                  label: 'Marriage' },
   mateChoice:  { kind: 'enum', values: ['free', 'kin', 'ruler'], label: 'Mate choice' },
   descent:     { kind: 'enum', values: ['matrilineal', 'patrilineal', 'bilateral', 'communal'],
@@ -13,16 +13,26 @@ export const GENES = {
   foraging:    { kind: 'enum', values: ['roam', 'territorial', 'rotation'], label: 'Foraging strategy' },
   property:    { kind: 'enum', values: ['communal', 'lineage', 'household', 'ruler'], label: 'Fields & herds owned by' },
   trade:       { kind: 'enum', values: ['none', 'kin', 'open', 'ruler'], label: 'Trade' },
-  governance:  { kind: 'enum', values: ['anarchy', 'democracy', 'chief', 'totalitarian'], label: 'Governance' },
-  enforcement: { kind: 'enum', values: ['gossip', 'fines', 'violence', 'exile'], label: 'Norm enforcement' },
+  governance:  { kind: 'enum', values: ['anarchy', 'democracy', 'chief', 'totalitarian', 'bigman', 'elders', 'clanMothers', 'segmentary'], label: 'Governance' },
+  enforcement: { kind: 'enum', values: ['gossip', 'fines', 'violence', 'exile', 'feud'], label: 'Norm enforcement' },
   outgroup:    { kind: 'enum', values: ['xenophobic', 'neutral', 'open'], label: 'Outgroup stance' },
   captives:    { kind: 'enum', values: ['kill', 'ransom', 'slave', 'adopt'], label: 'Captives' },
   famine:      { kind: 'enum', values: ['infanticide', 'elderCare', 'neither'], label: 'Child/elder policy' },
+  marriagePayment: { kind: 'enum', values: ['none', 'brideservice', 'bridewealth', 'dowry'], label: 'Marriage payment' },
+  menMarry:    { kind: 'enum', values: ['young', 'late'], label: 'Men marry' },
+  prestige:    { kind: 'enum', values: ['hoard', 'level', 'feast'], label: 'Status won by' },
+  storage:     { kind: 'enum', values: ['none', 'kept', 'big'], label: 'Food storage' },
+  membership:  { kind: 'enum', values: ['closed', 'marriage', 'fluid'], label: 'Who can join' },
+  ageSets:     { kind: 'enum', values: ['none', 'warriors'], label: 'Age sets' },
   fission:     { kind: 'dial', min: 80, max: 400, step: 10, label: 'Fission threshold (camp size)' },
   ritual:      { kind: 'dial', min: 0, max: 1, step: 0.05, label: 'Ritual & cohesion' },
 };
 
 export const GENE_KEYS = Object.keys(GENES);
+
+// Genes added in v0.4 default to what the engine did before, so old links and old presets behave as they did.
+export const GENE_DEFAULTS = { marriagePayment: 'none', menMarry: 'young', prestige: 'hoard', storage: 'kept', membership: 'marriage', ageSets: 'none' };
+export function withDefaults(g) { return { ...GENE_DEFAULTS, ...g }; }
 
 export const PRESETS = {
   'Egalitarian matriarchy': {
@@ -55,7 +65,65 @@ export const PRESETS = {
     labour: 'bySex', sharing: 'kin', foraging: 'territorial', property: 'lineage', trade: 'open', governance: 'chief',
     enforcement: 'fines', outgroup: 'neutral', captives: 'adopt', famine: 'elderCare', fission: 180, ritual: 0.5,
   },
+  'Immediate-return foragers': {
+    marriage: 'serial', mateChoice: 'free', descent: 'bilateral', residence: 'free',
+    labour: 'bySex', sharing: 'camp', foraging: 'roam', property: 'communal', trade: 'open', governance: 'anarchy',
+    enforcement: 'gossip', outgroup: 'neutral', captives: 'adopt', famine: 'neither',
+    marriagePayment: 'brideservice', menMarry: 'young', prestige: 'level', storage: 'none', membership: 'fluid', ageSets: 'none',
+    fission: 80, ritual: 0.2,
+  },
+  'Complex foragers': {
+    marriage: 'polygyny', mateChoice: 'kin', descent: 'matrilineal', residence: 'patrilocal',
+    labour: 'bySex', sharing: 'ruler', foraging: 'territorial', property: 'lineage', trade: 'open', governance: 'chief',
+    enforcement: 'feud', outgroup: 'xenophobic', captives: 'slave', famine: 'neither',
+    marriagePayment: 'bridewealth', menMarry: 'young', prestige: 'feast', storage: 'big', membership: 'marriage', ageSets: 'none',
+    fission: 400, ritual: 0.7,
+  },
+  'Big Man': {
+    marriage: 'polygyny', mateChoice: 'kin', descent: 'patrilineal', residence: 'patrilocal',
+    labour: 'bySex', sharing: 'kin', foraging: 'territorial', property: 'household', trade: 'open', governance: 'bigman',
+    enforcement: 'feud', outgroup: 'xenophobic', captives: 'kill', famine: 'neither',
+    marriagePayment: 'bridewealth', menMarry: 'late', prestige: 'feast', storage: 'kept', membership: 'marriage', ageSets: 'none',
+    fission: 300, ritual: 0.4,
+  },
+  'Segmentary lineage': {
+    marriage: 'polygyny', mateChoice: 'kin', descent: 'patrilineal', residence: 'patrilocal',
+    labour: 'bySex', sharing: 'kin', foraging: 'roam', property: 'lineage', trade: 'kin', governance: 'segmentary',
+    enforcement: 'feud', outgroup: 'xenophobic', captives: 'adopt', famine: 'neither',
+    marriagePayment: 'bridewealth', menMarry: 'late', prestige: 'hoard', storage: 'kept', membership: 'marriage', ageSets: 'none',
+    fission: 200, ritual: 0.4,
+  },
+  'Age sets': {
+    marriage: 'polygyny', mateChoice: 'kin', descent: 'patrilineal', residence: 'patrilocal',
+    labour: 'bySex', sharing: 'kin', foraging: 'roam', property: 'household', trade: 'open', governance: 'elders',
+    enforcement: 'fines', outgroup: 'xenophobic', captives: 'adopt', famine: 'neither',
+    marriagePayment: 'bridewealth', menMarry: 'late', prestige: 'hoard', storage: 'kept', membership: 'marriage', ageSets: 'warriors',
+    fission: 200, ritual: 0.6,
+  },
+  "Elders' rule": {
+    marriage: 'polygyny', mateChoice: 'kin', descent: 'patrilineal', residence: 'patrilocal',
+    labour: 'bySex', sharing: 'camp', foraging: 'roam', property: 'lineage', trade: 'open', governance: 'elders',
+    enforcement: 'violence', outgroup: 'neutral', captives: 'adopt', famine: 'neither',
+    marriagePayment: 'brideservice', menMarry: 'late', prestige: 'level', storage: 'none', membership: 'marriage', ageSets: 'none',
+    fission: 80, ritual: 0.8,
+  },
+  'Clan mothers': {
+    marriage: 'monogamy', mateChoice: 'kin', descent: 'matrilineal', residence: 'matrilocal',
+    labour: 'bySex', sharing: 'camp', foraging: 'territorial', property: 'lineage', trade: 'open', governance: 'clanMothers',
+    enforcement: 'fines', outgroup: 'xenophobic', captives: 'adopt', famine: 'neither',
+    marriagePayment: 'none', menMarry: 'young', prestige: 'level', storage: 'kept', membership: 'marriage', ageSets: 'none',
+    fission: 400, ritual: 0.6,
+  },
+  'Fraternal polyandry': {
+    marriage: 'fraternal', mateChoice: 'kin', descent: 'patrilineal', residence: 'patrilocal',
+    labour: 'bySex', sharing: 'household', foraging: 'territorial', property: 'household', trade: 'open', governance: 'democracy',
+    enforcement: 'fines', outgroup: 'neutral', captives: 'ransom', famine: 'elderCare',
+    marriagePayment: 'dowry', menMarry: 'young', prestige: 'hoard', storage: 'kept', membership: 'closed', ageSets: 'none',
+    fission: 300, ritual: 0.7,
+  },
 };
+
+for (const k of Object.keys(PRESETS)) PRESETS[k] = withDefaults(PRESETS[k]);
 
 export function cloneGenome(g) { return { ...g }; }
 

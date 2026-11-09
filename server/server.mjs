@@ -19,7 +19,7 @@ import { existsSync } from 'node:fs';
 import { Worker } from 'node:worker_threads';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { GENES, GENE_KEYS } from '../src/genome.js';
+import { GENES, GENE_KEYS, withDefaults } from '../src/genome.js';
 import { ENVIRONMENTS } from '../src/world.js';
 import { MODEL_VERSION, tuningToParams, PARAM_UI } from '../src/params.js';
 import { aggregate } from '../src/sweep.js';
@@ -28,7 +28,7 @@ const ROOT = fileURLToPath(new URL('../public/', import.meta.url));
 const DATA = process.env.DATA_DIR || '/data';
 const PORT = +(process.env.PORT || 80);
 const WORKERS = Math.max(1, +(process.env.SWEEP_WORKERS || os.availableParallelism()));
-const LIMITS = { seeds: 200, pairs: 28, envs: 4, runs: 12000, queue: 4, years: 1000, body: 256 * 1024 };
+const LIMITS = { seeds: 200, pairs: 105, envs: 4, runs: 12000, queue: 4, years: 1000, body: 256 * 1024 };
 
 try { os.setPriority(10); } catch { /* sweeps run below the hub's other services */ }
 await mkdir(join(DATA, 'sweeps'), { recursive: true });
@@ -37,6 +37,7 @@ await mkdir(join(DATA, 'sweeps'), { recursive: true });
 function bad(msg) { const e = new Error(msg); e.status = 400; throw e; }
 function cleanGenome(g) {
   if (!g || typeof g !== 'object') bad('genome missing');
+  g = withDefaults(g); // genomes from before v0.4 lack the newer genes
   const out = {};
   for (const k of GENE_KEYS) {
     const spec = GENES[k], v = g[k];

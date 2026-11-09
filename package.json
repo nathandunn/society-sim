@@ -1,6 +1,6 @@
 {
   "name": "society-sim",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Pits social organisation strategies against each other over 500 years in forest, farmland, desert and island worlds",
   "type": "module",
   "scripts": {
