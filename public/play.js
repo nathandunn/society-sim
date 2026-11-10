@@ -21,7 +21,7 @@ export function initPlay(ctx) {
   function worker() {
     if (w) return w;
     w = new Worker('live.js', { type: 'module' });
-    w.onerror = e => { stop(); waiting = false; $('#pStatus').textContent = 'The simulation could not start in this browser: ' + (e.message || 'worker failed to load') + '. Try reloading the page.'; };
+    w.onerror = e => { stop(); waiting = false; status('The simulation could not start in this browser: ' + esc(e.message || 'worker failed to load') + '. Try reloading the page.', true); };
     w.onmessage = ev => {
       const m = ev.data;
       if (m.type === 'meta') {
@@ -29,15 +29,14 @@ export function initPlay(ctx) {
         // year 0: draw the founding camps straight away
         const f0 = { y: 0, socs: snap.societies.filter(s => s.alive).map(s => ({ id: s.id, name: s.name, color: s.color, parent: s.parent, home: s.home, leader: s.leader, pop: s.pop, herds: s.herds, sedentary: s.sedentary, fed: s.fed })),
           fields: [], events: [], births: 0, deaths: 0, pops: snap.societies.map(s => s.pop) };
-        frames = [f0]; pops[0] = f0.pops; drawMap(f0); drawChart(); setYear(0); showInspector();
+        frames = [f0]; pops[0] = f0.pops; view.fit = false; drawMap(f0); drawChart(); setYear(0); showInspector(); renderHud(f0);
       }
       else if (m.type === 'frames') {
         waiting = false; m.frames.forEach(onFrame); done = m.done;
         if (m.stopped) {
           render();
           const y = frames.at(-1)?.y ?? 0;
-          $('#pStatus').innerHTML = m.hit ? `<b>Stopped at year ${y}:</b> ${esc(m.hit)}. Look inside below, change what you like, and run on.`
-            : `Ran ${m.stopped.years} year${m.stopped.years === 1 ? '' : 's'} to year ${y}${m.stopped.until !== 'none' ? ' — it never happened' : ''}.`;
+          status(m.hit ? `<b>Stopped at year ${y}:</b> ${esc(m.hit)}` : `Ran ${m.stopped.years} year${m.stopped.years === 1 ? '' : 's'} to year ${y}${m.stopped.until !== 'none' ? ' — it never happened' : ''}.`, !!m.hit);
         }
         if (done) { stop(); finish(); }
       }
@@ -46,7 +45,7 @@ export function initPlay(ctx) {
       else if (m.type === 'intervened') { pending.push(m.rec); renderPending(); if (!base) w.postMessage({ type: 'baseline' }); }
       else if (m.type === 'baseline') { base = m.base; drawChart(); }
       else if (m.type === 'result') showResult(m.result, applied.length ? base : null);
-      else if (m.type === 'error') { stop(); $('#pStatus').textContent = 'Error: ' + m.message; console.error(m.message); }
+      else if (m.type === 'error') { stop(); status('Error: ' + esc(m.message), true); console.error(m.message); }
     };
     return w;
   }
@@ -55,9 +54,9 @@ export function initPlay(ctx) {
   const ensure = () => { if (!started) start(); };
   function start() {
     started = true; stop(); waiting = false; done = false; base = null; pending = []; recent = []; applied = []; personId = null; socInfo = new Map(); sel = 0;
-    $('#pEvents').innerHTML = ''; $('#pPending').innerHTML = ''; $('#pPerson').hidden = true; $('#pCompare').hidden = true;
+    $('#pEvents').innerHTML = ''; $('#pPending').innerHTML = ''; $('#pPerson').hidden = true; $('#pCompare').hidden = true; $('#pTicker').innerHTML = '';
     worker().postMessage({ type: 'init', cfg: getCfg() });
-    $('#pStatus').textContent = 'Ready at year 0. Press Play, or step a year at a time. Pause at any moment to look inside and change things.';
+    status('Press Play. Tap a camp to look inside; drag and pinch to move about.');
   }
 
   function onFrame(f) {
@@ -89,14 +88,14 @@ export function initPlay(ctx) {
     if (playing) play();
     const until = $('#pUntil').value, who = $('#pWho').value;
     waiting = true;
-    $('#pStatus').textContent = 'Running…';
+    status('Running…', true); $('#pUntilBox').hidden = true;
     w.postMessage({ type: 'runUntil', max: Math.max(1, Math.min(1000, +$('#pMax').value || 50)), until, soc: who === 'any' ? null : sel });
     requestAnimationFrame(render);
   }
   function render() {
     if (waiting) { requestAnimationFrame(render); return; }
     const f = frames[frames.length - 1]; if (!f) return;
-    setYear(f.y); drawMap(f); drawChart();
+    setYear(f.y); drawMap(f); renderHud(f); if (!$('#pDrawer').hidden && !document.querySelector('#pDrawer [data-pane=chart]:not(button)').hidden) drawChart();
     const evs = recent.slice().reverse();
     $('#pEvents').innerHTML = `<div class="muted pyline">Year ${f.y}: ${f.births} born, ${f.deaths} died</div>` + (evs.map(e => `<div class="ev"><span class="y">${e.y}</span><span>${say(e)}</span></div>`).join('') || '<div class="more">A quiet year.</div>');
   }
@@ -104,7 +103,7 @@ export function initPlay(ctx) {
     ensure();
     if (done) return;
     playing = !playing; $('#pPlay').textContent = playing ? '❚❚ Pause' : '▶ Play';
-    $('#pStatus').textContent = playing ? 'Running. Pause to look inside and step in.' : 'Paused. Look inside below, change what you like, then play on.';
+    status(playing ? 'Running' : 'Paused — tap a camp to step in');
     $('#pInspect').classList.toggle('dim', playing);
     if (playing) { clearInterval(timer); timer = setInterval(() => { tick(); render(); }, 100); }
     else { clearInterval(timer); w.postMessage({ type: 'snapshot' }); }
@@ -112,7 +111,7 @@ export function initPlay(ctx) {
   function stop() { playing = false; clearInterval(timer); if ($('#pPlay')) $('#pPlay').textContent = '▶ Play'; $('#pInspect')?.classList.remove('dim'); }
   function finish() {
     render(); w.postMessage({ type: 'snapshot' });
-    $('#pStatus').innerHTML = `The history is over at year ${frames.at(-1)?.y ?? 0}. <button id="pSeeAll" class="primary">See full results</button>`;
+    status(`The history is over at year ${frames.at(-1)?.y ?? 0}. <button id="pSeeAll" class="primary">See full results</button>`, true);
     $('#pSeeAll').onclick = () => { if (applied.length && !base) w.postMessage({ type: 'baseline' }); setTimeout(() => w.postMessage({ type: 'result' }), applied.length && !base ? 400 : 0); };
     if (applied.length) compare();
   }
@@ -121,15 +120,19 @@ export function initPlay(ctx) {
   // ---------- map ----------
   function drawMap(f) {
     const cv = $('#pMap'); if (!meta) return;
-    const G = meta.grid, box = cv.parentElement.clientWidth, px = Math.min(560, box), cell = px / G, dpr = devicePixelRatio || 1;
-    cv.width = px * dpr; cv.height = px * dpr; cv.style.width = px + 'px'; cv.style.height = px + 'px';
+    const G = meta.grid, W = cv.clientWidth || innerWidth, H = cv.clientHeight || innerHeight, dpr = devicePixelRatio || 1;
+    if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+    if (!view.fit) fitView(W, H);
+    const cell = view.base * view.z, ox = view.ox, oy = view.oy, px = W, z = view.z;
     const c = cv.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.fillStyle = getComputedStyle(document.body).getPropertyValue('--bg') || '#111'; c.fillRect(0, 0, W, H);
     const dk = dark(), mix = (a, b, t) => a.map((x, k) => Math.round(x + (b[k] - x) * t));
     const rgb = (a, m = 1) => `rgb(${a.map(x => Math.round(x * m)).join(',')})`, shade = dk ? 0.45 : 1;
     const SAND = [232, 222, 192], WOOD = [96, 140, 82], SEA = [150, 190, 222], DEEP = [70, 125, 175], RIVER = [120, 170, 220], SOIL = [214, 206, 140];
     // terrain: sand to forest by how much food the land holds now; sea deeper where the fish are
     meta.map.forEach((v, i) => {
-      const x = (i % G) * cell, y = Math.floor(i / G) * cell;
+      const x = ox + (i % G) * cell, y = oy + Math.floor(i / G) * cell;
+      if (x > W || y > H || x + cell < 0 || y + cell < 0) return;
       let col;
       if (v === 0) col = mix(SEA, DEEP, (meta.fish?.[i] || 0) / 9);
       else if (v === 3) col = RIVER;
@@ -143,13 +146,14 @@ export function initPlay(ctx) {
     const colorOf = id => socInfo.get(id)?.color || '#888';
     // fields: ploughed plots with furrows in the owner's colour
     (f.fields || []).forEach(([i, s]) => {
-      const x = (i % G) * cell + 1.5, y = Math.floor(i / G) * cell + 1.5, w2 = cell - 3;
+      const x = ox + (i % G) * cell + 1.5, y = oy + Math.floor(i / G) * cell + 1.5, w2 = cell - 3;
       c.fillStyle = rgb([176, 138, 84], shade); c.fillRect(x, y, w2, w2);
       c.strokeStyle = colorOf(s); c.lineWidth = Math.max(1, cell / 14); c.globalAlpha = 0.9;
       for (let k = 1; k < 4; k++) { c.beginPath(); c.moveTo(x + 1, y + w2 * k / 4); c.lineTo(x + w2 - 1, y + w2 * k / 4); c.stroke(); }
       c.globalAlpha = 1; c.lineWidth = 1.5; c.strokeRect(x, y, w2, w2);
     });
-    const at = h => [(h.x + 0.5) * cell, (h.y + 0.5) * cell];
+    const at = h => [ox + (h.x + 0.5) * cell, oy + (h.y + 0.5) * cell];
+    hit = { f, at, cell };
     const homeOf = new Map(f.socs.map(s => [s.id, s.home]));
     // raids and other links this year
     const lastFrames = frames.slice(-3);
@@ -163,20 +167,20 @@ export function initPlay(ctx) {
     }));
     // camps and villages
     f.socs.forEach(s => {
-      const [x, y] = at(s.home), r = Math.max(7, Math.min(cell * 1.8, 4 + Math.sqrt(s.pop) * 1.3));
+      const [x, y] = at(s.home), r = Math.max(7, Math.min(cell * 1.8, (4 + Math.sqrt(s.pop) * 1.3) * Math.sqrt(z)));
       const sick = frames.at(-1).events.some(e => e.t === 'epidemic' && e.soc === s.id);
       if (sick) { c.beginPath(); c.arc(x, y, r + 6, 0, 7); c.strokeStyle = '#7c3aed'; c.lineWidth = 3; c.stroke(); }
       const col = colorOf(s.id);
       // herds graze around the camp
       const nh = Math.min(28, Math.round(s.herds / 6));
-      for (let k = 0; k < nh; k++) { const ang = k * 2.39996, d = r + 6 + (k % 4) * 3.5; c.fillStyle = k % 3 ? (dk ? '#e7e5e4' : '#fafaf9') : '#78350f'; c.beginPath(); c.ellipse(x + Math.cos(ang) * d, y + Math.sin(ang) * d, 2.4, 1.6, 0, 0, 7); c.fill(); }
+      for (let k = 0; k < nh; k++) { const ang = k * 2.39996, d = r + (6 + (k % 4) * 3.5) * Math.sqrt(z); c.fillStyle = k % 3 ? (dk ? '#e7e5e4' : '#fafaf9') : '#78350f'; c.beginPath(); c.ellipse(x + Math.cos(ang) * d, y + Math.sin(ang) * d, 2.4 * Math.sqrt(z), 1.6 * Math.sqrt(z), 0, 0, 7); c.fill(); }
       // the ground the camp or village stands on
       c.beginPath(); c.arc(x, y, r + 2, 0, 7); c.fillStyle = col; c.globalAlpha = 0.28; c.fill(); c.globalAlpha = 1;
       c.lineWidth = s.id === sel ? 3 : 1.5; c.strokeStyle = s.id === sel ? (dk ? '#fff' : '#111') : col; c.stroke();
       // dwellings: one for every five or so people — tents in a camp, houses in a village
       const nd = Math.max(1, Math.min(24, Math.round(s.pop / 5)));
       for (let k = 0; k < nd; k++) {
-        const ang = k * 2.39996, d = nd === 1 ? 0 : r * 0.72 * Math.sqrt((k + 0.5) / nd), hx = x + Math.cos(ang) * d, hy = y + Math.sin(ang) * d, sz = Math.max(3, Math.min(6, cell * 0.22));
+        const ang = k * 2.39996, d = nd === 1 ? 0 : r * 0.72 * Math.sqrt((k + 0.5) / nd), hx = x + Math.cos(ang) * d, hy = y + Math.sin(ang) * d, sz = Math.max(3, Math.min(6 * Math.sqrt(z), cell * 0.22));
         c.fillStyle = col; c.strokeStyle = dk ? 'rgba(0,0,0,.6)' : 'rgba(0,0,0,.45)'; c.lineWidth = 0.8;
         if (s.sedentary) { c.fillRect(hx - sz * 0.6, hy - sz * 0.2, sz * 1.2, sz * 0.8); c.strokeRect(hx - sz * 0.6, hy - sz * 0.2, sz * 1.2, sz * 0.8); c.beginPath(); c.moveTo(hx - sz * 0.8, hy - sz * 0.2); c.lineTo(hx, hy - sz * 0.9); c.lineTo(hx + sz * 0.8, hy - sz * 0.2); c.closePath(); c.fillStyle = dk ? '#a8a29e' : '#78716c'; c.fill(); c.stroke(); }
         else { c.beginPath(); c.moveTo(hx - sz * 0.7, hy + sz * 0.5); c.lineTo(hx, hy - sz * 0.7); c.lineTo(hx + sz * 0.7, hy + sz * 0.5); c.closePath(); c.fill(); c.stroke(); }
@@ -187,11 +191,78 @@ export function initPlay(ctx) {
       const tw = c.measureText(label).width / 2, lx = Math.max(tw + 3, Math.min(px - tw - 3, x)), ly = y - r - 5 < 12 ? y + r + 15 : y - r - 5;
       c.strokeText(label, lx, ly); c.fillStyle = dark() ? '#f5f5f4' : '#1c1917'; c.fillText(label, lx, ly);
     });
-    cv.onclick = ev => {
-      const rect = cv.getBoundingClientRect(), mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
-      let best = null, bd = 1e9; f.socs.forEach(s => { const [x, y] = at(s.home); const d = Math.hypot(x - mx, y - my); if (d < bd) { bd = d; best = s.id; } });
-      if (best != null && bd < cell * 3) { sel = best; drawMap(f); showInspector(); }
+  }
+
+  // ---------- moving about the map: drag to pan, pinch or wheel to zoom, tap a camp ----------
+  const view = { z: 1, ox: 0, oy: 0, base: 10, fit: false };
+  let hit = null;
+  // the part of the screen not covered by the bars and the drawer
+  function area(W, H) {
+    const open = !$('#pDrawer').hidden, wide = W > 700, top = $('.hudtop').offsetHeight || 56;
+    return { x0: 0, y0: top, w: W - (open && wide ? $('#pDrawer').offsetWidth : 0), h: H - top - (open && !wide ? $('#pDrawer').offsetHeight : 64) };
+  }
+  // fill the screen with the map (no empty margins), centred on where people live
+  function fitView(W, H) {
+    const G = meta.grid, a = area(W, H);
+    view.base = Math.max(a.w, a.h) / G; view.z = 1; view.fit = true;
+    const socs = (frames.at(-1) || {}).socs || [];
+    const cx = socs.length ? socs.reduce((t, s) => t + s.home.x, 0) / socs.length + 0.5 : G / 2, cy = socs.length ? socs.reduce((t, s) => t + s.home.y, 0) / socs.length + 0.5 : G / 2;
+    centre(cx, cy, W, H);
+  }
+  function centre(cx, cy, W, H) {
+    const G = meta.grid, a = area(W, H), cell = view.base * view.z;
+    view.ox = Math.min(a.x0, Math.max(a.x0 + a.w - G * cell, a.x0 + a.w / 2 - cx * cell));
+    view.oy = Math.min(a.y0, Math.max(a.y0 + a.h - G * cell, a.y0 + a.h / 2 - cy * cell));
+  }
+  function focus(id) {
+    const s = (frames.at(-1)?.socs || []).find(x => x.id === id), cv = $('#pMap'); if (!s) return;
+    centre(s.home.x + 0.5, s.home.y + 0.5, cv.clientWidth, cv.clientHeight); redraw();
+  }
+  function zoomAt(k, mx, my) {
+    const nz = Math.max(0.6, Math.min(8, view.z * k)); k = nz / view.z;
+    view.ox = mx - (mx - view.ox) * k; view.oy = my - (my - view.oy) * k; view.z = nz; redraw();
+  }
+  const redraw = () => drawMap(frames.at(-1) || null);
+  function bindMap() {
+    const cv = $('#pMap'), pts = new Map(); let moved = 0, pinch = 0;
+    const rel = e => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+    cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); pts.set(e.pointerId, rel(e)); moved = 0; if (pts.size === 2) { const [a, b] = [...pts.values()]; pinch = Math.hypot(a[0] - b[0], a[1] - b[1]); } cv.classList.add('dragging'); });
+    cv.addEventListener('pointermove', e => {
+      if (!pts.has(e.pointerId)) return;
+      const p0 = pts.get(e.pointerId), p1 = rel(e); pts.set(e.pointerId, p1);
+      if (pts.size === 1) { view.ox += p1[0] - p0[0]; view.oy += p1[1] - p0[1]; moved += Math.abs(p1[0] - p0[0]) + Math.abs(p1[1] - p0[1]); redraw(); }
+      else if (pts.size === 2) { const [a, b] = [...pts.values()]; const d = Math.hypot(a[0] - b[0], a[1] - b[1]); if (pinch) zoomAt(d / pinch, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2); pinch = d; moved += 10; }
+    });
+    const up = e => {
+      const p = pts.get(e.pointerId); pts.delete(e.pointerId); if (pts.size < 2) pinch = 0; if (!pts.size) cv.classList.remove('dragging');
+      if (p && moved < 6 && hit) { // a tap: pick the nearest camp
+        let best = null, bd = 1e9; hit.f.socs.forEach(s => { const [x, y] = hit.at(s.home); const d = Math.hypot(x - p[0], y - p[1]); if (d < bd) { bd = d; best = s.id; } });
+        if (best != null && bd < Math.max(28, hit.cell * 2)) { sel = best; if (snap) showInspector(); openDrawer('soc'); focus(best); }
+      }
     };
+    cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+    cv.addEventListener('wheel', e => { e.preventDefault(); const [mx, my] = rel(e); zoomAt(Math.exp(-e.deltaY * 0.0015), mx, my); }, { passive: false });
+    $('#pZin').onclick = () => zoomAt(1.4, cv.clientWidth / 2, cv.clientHeight / 2);
+    $('#pZout').onclick = () => zoomAt(1 / 1.4, cv.clientWidth / 2, cv.clientHeight / 2);
+    $('#pFit').onclick = () => { view.fit = false; redraw(); };
+  }
+
+  // ---------- drawer, ticker, chips, status ----------
+  function openDrawer(pane) {
+    $('#pDrawer').hidden = false;
+    if (pane) document.querySelectorAll('#pDrawer [data-pane]').forEach(el => { if (el.tagName === 'BUTTON') el.classList.toggle('on', el.dataset.pane === pane); else el.hidden = el.dataset.pane !== pane; });
+    if (pane === 'chart') drawChart();
+  }
+  function closeDrawer() { $('#pDrawer').hidden = true; }
+  let statusTimer = null;
+  function status(html, stay) {
+    const el = $('#pStatus'); el.innerHTML = html; el.classList.remove('fade'); clearTimeout(statusTimer);
+    if (!stay) statusTimer = setTimeout(() => el.classList.add('fade'), 5000);
+  }
+  function renderHud(f) {
+    $('#pTicker').innerHTML = recent.slice(-3).reverse().map(e => `<div><span class="y">${e.y}</span>${say(e)}</div>`).join('');
+    $('#pChips').innerHTML = f.socs.map(s => `<button class="chipbtn ${s.id === sel ? 'on' : ''}" data-id="${s.id}" style="--c:${socInfo.get(s.id)?.color}"><i></i>${esc(nameOf(s.id))} <b>${s.pop}</b>${s.fed < 0.85 ? ' <span class="bad">hungry</span>' : ''}</button>`).join('');
+    $('#pChips').querySelectorAll('button').forEach(b => b.onclick = () => { sel = +b.dataset.id; if (snap) showInspector(); openDrawer('soc'); focus(sel); });
   }
   function arrow(c, [x1, y1], [x2, y2], color, dash, wdt) {
     const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1, ux = dx / L, uy = dy / L;
@@ -294,7 +365,7 @@ export function initPlay(ctx) {
     $('#pPeople').querySelectorAll('th').forEach(th => th.onclick = () => { const k = th.dataset.k; if (!k) return; if (k === sortKey) sortDir *= -1; else { sortKey = k; sortDir = -1; } renderPeople(); });
     $('#pPeople').querySelectorAll('tbody tr').forEach(tr => tr.onclick = () => openPerson(+tr.dataset.id));
   }
-  function openPerson(id) { personId = id; w.postMessage({ type: 'person', id }); }
+  function openPerson(id) { personId = id; w.postMessage({ type: 'person', id }); openDrawer('people'); }
   function renderPerson(p) {
     const box = $('#pPerson'); if (!p) { box.hidden = true; return; }
     box.hidden = false;
@@ -322,7 +393,7 @@ export function initPlay(ctx) {
     const now = id => (pops[f.y] || []).reduce((t, v, k) => t + (rootOf(k) === id ? v : 0), 0);
     const bRoot = id => { let x = base.societies[id]; while (x && x.parent != null) x = base.societies[x.parent]; return x?.id ?? id; };
     const was = id => base.pop.reduce((t, arr, k) => t + (bRoot(k) === id ? (arr[Math.min(f.y, base.years - 1)] || 0) : 0), 0);
-    $('#pCompare').hidden = false;
+    $('#pCompare').hidden = false; openDrawer('chart');
     $('#pCompareBody').innerHTML = `<table><thead><tr><th>Founding line</th><th class="num">With your changes</th><th class="num">Untouched</th></tr></thead><tbody>` +
       lines.map(l => { const a = now(l.id), b = was(l.id); return `<tr><td><span class="dot" style="background:${l.color}"></span>${esc(l.name)}</td><td class="num"><b>${a ? a + ' people' : 'gone'}</b></td><td class="num">${b ? b + ' people' : 'gone'}</td></tr>`; }).join('') + '</tbody></table>';
   }
@@ -333,7 +404,14 @@ export function initPlay(ctx) {
   $('#pStep').onclick = () => step(1);
   $('#pStep10').onclick = () => step(10);
   $('#pRunUntil').onclick = runUntil;
+  $('#pUntilBtn').onclick = () => { const b = $('#pUntilBox'); b.hidden = !b.hidden; $('#pUntilBtn').setAttribute('aria-expanded', String(!b.hidden)); };
+  $('#pOpen').onclick = () => $('#pDrawer').hidden ? openDrawer() : closeDrawer();
+  $('#pClose2').onclick = closeDrawer;
+  $('#pTicker').onclick = () => openDrawer('log');
+  document.querySelectorAll('#pDrawer .dtabs button').forEach(b => b.onclick = () => openDrawer(b.dataset.pane));
+  $('#pExit').onclick = () => { if (playing) play(); ctx.exit(); };
+  bindMap();
   $('#pSpeed').innerHTML = SPEEDS.map((s, i) => `<option value="${i}" ${i === 2 ? 'selected' : ''}>${s} yr/s</option>`).join('');
-  addEventListener('resize', () => { if (meta) { drawMap(frames.at(-1)); drawChart(); } });
-  return { start, ensure };
+  addEventListener('resize', () => { if (meta) { view.fit = false; redraw(); } });
+  return { start, ensure, show: () => { if (meta) { view.fit = false; requestAnimationFrame(redraw); } } };
 }

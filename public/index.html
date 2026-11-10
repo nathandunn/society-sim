@@ -80,15 +80,22 @@
   </section>
 
   <section id="tab-play" hidden>
-    <section class="panel playbar">
-      <button id="pStart" class="primary">Start a new history</button>
-      <span id="pPlayBox" class="pctl">
-        <button id="pPlay">▶ Play</button>
-        <button id="pStep">+1 year</button>
-        <button id="pStep10">+10 years</button>
-        <label>Speed <select id="pSpeed"></select></label>
+    <div id="stage" class="stage">
+      <canvas id="pMap" aria-label="Map of the world"></canvas>
+      <div class="hud hudtop">
+        <button id="pExit" class="hb" title="Back to the setup">⚙ Setup</button>
         <b id="pYear" class="pyear">Year 0</b>
-        <span class="rununtil">Run up to <input id="pMax" type="number" value="50" min="1" max="1000" aria-label="Most years to run"> years, stopping at
+        <button id="pPlay" class="hb primary">▶ Play</button>
+        <button id="pStep" class="hb" title="One year">+1</button>
+        <button id="pStep10" class="hb" title="Ten years">+10</button>
+        <select id="pSpeed" class="hb" aria-label="Speed"></select>
+        <button id="pUntilBtn" class="hb" aria-expanded="false">Run until…</button>
+        <button id="pStart" class="hb" title="Start a new history with the current setup">↻ New</button>
+        <span class="grow"></span>
+        <button id="pOpen" class="hb" title="Look inside, step in">☰ Inspect</button>
+      </div>
+      <div id="pUntilBox" class="hud pop" hidden>
+        <div class="rununtil">Run up to <input id="pMax" type="number" value="50" min="1" max="1000" aria-label="Most years to run"> years, stopping at
           <select id="pUntil" aria-label="Stop when">
             <option value="none">nothing (run them all)</option>
             <option value="cataclysm" selected>a cataclysm</option>
@@ -101,25 +108,41 @@
             <option value="split">a split, merger, conquest or extinction</option>
           </select>
           in <select id="pWho" aria-label="Which society"><option value="sel">the picked society</option><option value="any">any society</option></select>
-          <button id="pRunUntil" class="primary">Run</button></span>
-      </span>
-      <p id="pStatus" class="hint pstatus">Set up two societies and a world above, then start. Make a change, then run a few years or until something happens — a new leader, a raid, a plague, a cataclysm. You can pause at any year, look at every person, and change rules or send blights, plagues, gifts and raids. Your changes are replayed exactly, and the history without them is drawn beside yours.</p>
-    </section>
-    <div class="playgrid">
-      <section class="panel"><h2>The world</h2><p class="hint">Tents are a moving camp, roofed houses a settled village — one for every five people; furrowed plots are fields in the owner's colour; white and brown dots are livestock. Green land is full of game and plants, sandy land is bare or hunted out; darker sea has more fish. Red arrows are raids (dashed: beaten off), purple rings outbreaks, an orange dot a hungry camp. Click a camp to pick it.</p><div class="mapbox"><canvas id="pMap"></canvas></div></section>
-      <section class="panel"><h2>Population</h2><div id="pChart"></div><div id="pChartKey" class="key"></div><h3>Lately</h3><div id="pEvents" class="log plog"></div></section>
+          <button id="pRunUntil" class="primary">Run</button></div>
+      </div>
+      <div id="pStatus" class="hud status"></div>
+      <div class="hud zoom"><button id="pZin" class="hb" aria-label="Zoom in">+</button><button id="pZout" class="hb" aria-label="Zoom out">−</button><button id="pFit" class="hb" aria-label="Fit the map">⤢</button></div>
+      <div class="hud bottom">
+        <div id="pChips" class="chips hudchips"></div>
+        <div id="pTicker" class="ticker" title="Tap for the full chronicle"></div>
+      </div>
+      <aside id="pDrawer" class="drawer" hidden>
+        <div class="dhead">
+          <div class="dtabs" role="tablist">
+            <button data-pane="soc" class="on">Society</button><button data-pane="people">People</button><button data-pane="log">Chronicle</button><button data-pane="chart">Population</button>
+          </div>
+          <button id="pClose2" class="hb" aria-label="Close">✕</button>
+        </div>
+        <div class="dbody">
+          <div data-pane="soc" id="pInspect">
+            <div id="pSocTabs" class="chips"></div>
+            <div id="pPending"></div>
+            <div id="pSoc"></div>
+          </div>
+          <div data-pane="people" hidden>
+            <div id="pFilters" class="chips"></div>
+            <aside id="pPerson" class="person" hidden></aside>
+            <div id="pPeople" class="tablewrap"></div>
+          </div>
+          <div data-pane="log" hidden><div id="pEvents" class="log plog"></div></div>
+          <div data-pane="chart" hidden>
+            <div id="pChart"></div><div id="pChartKey" class="key"></div>
+            <section id="pCompare" hidden><h3>How your changes turned out</h3><div id="pCompareBody" class="tablewrap"></div></section>
+            <p class="hint">Tents are a moving camp, roofed houses a settled village — one for every five people. Furrowed plots are fields in the owner's colour; white and brown dots are livestock. Green land is full of game and plants, sandy land bare or hunted out; darker sea has more fish. Red arrows are raids (dashed: beaten off), a purple ring an outbreak, an orange dot a hungry camp. Drag to move the map, pinch or scroll to zoom, tap a camp to inspect it.</p>
+          </div>
+        </div>
+      </aside>
     </div>
-    <section id="pInspect" class="panel">
-      <h2>Look inside and step in</h2>
-      <p class="hint">Pause first. Anything you do takes effect as the next year begins.</p>
-      <div id="pSocTabs" class="chips"></div>
-      <div id="pPending"></div>
-      <div id="pSoc"></div>
-      <h3>People</h3>
-      <div id="pFilters" class="chips"></div>
-      <div class="peoplegrid"><div id="pPeople" class="tablewrap"></div><aside id="pPerson" class="person" hidden></aside></div>
-    </section>
-    <section id="pCompare" class="panel" hidden><h2>How your changes turned out</h2><div id="pCompareBody" class="tablewrap"></div></section>
   </section>
 
   <section id="tab-sweep" hidden>
