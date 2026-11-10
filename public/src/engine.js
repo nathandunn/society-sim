@@ -1515,6 +1515,7 @@ export function createSim(cfg) {
       y,
       socs: societies.filter(s => s.alive).map(s => ({ id: s.id, name: s.name, color: s.color, parent: s.parent, home: s.home, leader: s.leader, pop: members(s).length, herds: Math.round(herdTotal(s)), sedentary: s.sedentary, fed: +(s.meanRatio ?? 1).toFixed(2) })),
       fields: patches.map((pt, i) => pt.field ? [i, pt.field.soc] : null).filter(Boolean),
+      lush: patches.map(pt => { const k = pt.K.plant + pt.K.game; return k > 0 && pt.stock ? Math.round(9 * Math.min(1, ((pt.stock.plant || 0) + (pt.stock.game || 0)) / k)) : 9; }),
       events: fresh.filter(e => e.t !== 'death' && e.t !== 'birth' && e.t !== 'inherit' && e.t !== 'trade'),
       deaths: fresh.filter(e => e.t === 'death').length, births: fresh.filter(e => e.t === 'birth').length,
       pops: societies.map(s => s.alive ? members(s).length : 0),
@@ -1619,6 +1620,8 @@ export function createSim(cfg) {
     get year() { return nextYear; }, get done() { return ended || nextYear >= years; },
     meta: () => ({ grid: G, env: envKey, envName: ENVIRONMENTS[envKey].name, years, version: MODEL_VERSION,
       map: patches.map(pt => pt.land ? (pt.water ? 3 : pt.arable && pt.fert >= 1 ? 2 : pt.grass ? 4 : 1) : 0),
+      rich: (() => { const v = patches.map(pt => pt.K.plant + pt.K.game), mx = Math.max(1, ...v); return v.map(x => Math.round(9 * x / mx)); })(),
+      fish: (() => { const v = patches.map(pt => pt.K.fish), mx = Math.max(1, ...v); return v.map(x => Math.round(9 * x / mx)); })(),
       isles: patches.map(pt => pt.isle ?? 0),
       societies: societies.map(s => ({ id: s.id, name: s.name, color: s.color })) }),
   };

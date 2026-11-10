@@ -4,7 +4,7 @@ import { TECHS } from './src/params.js';
 import { lineChart } from './charts.js';
 
 const $ = s => document.querySelector(s);
-const TERRAIN = { light: ['#bcd3e6', '#e9e2cf', '#d7dfb4', '#8fb8de', '#e4dfae'], dark: ['#1d2b38', '#3a372d', '#3d4429', '#28465f', '#4a4630'] };
+const TERRAIN = { light: ['#bcd3e6', '#e9e2cf', '#d7dfb4', '#8fb8de', '#e4dfae'], dark: ['#1f3a52', '#4a4536', '#4f5a33', '#3570a0', '#5e5838'] };
 const SPEEDS = [1, 5, 10, 25, 50];
 const ACT = { plant: 'gathering', hunt: 'hunting', fish: 'fishing', farm: 'farming', herd: 'herding' };
 
@@ -21,9 +21,16 @@ export function initPlay(ctx) {
   function worker() {
     if (w) return w;
     w = new Worker('live.js', { type: 'module' });
+    w.onerror = e => { stop(); waiting = false; $('#pStatus').textContent = 'The simulation could not start in this browser: ' + (e.message || 'worker failed to load') + '. Try reloading the page.'; };
     w.onmessage = ev => {
       const m = ev.data;
-      if (m.type === 'meta') { meta = m.meta; snap = m.snap; meta.societies.forEach(s => socInfo.set(s.id, { ...s, parent: null })); frames = []; pops = []; drawMap(null); setYear(0); showInspector(); }
+      if (m.type === 'meta') {
+        meta = m.meta; snap = m.snap; meta.societies.forEach(s => socInfo.set(s.id, { ...s, parent: null })); frames = []; pops = [];
+        // year 0: draw the founding camps straight away
+        const f0 = { y: 0, socs: snap.societies.filter(s => s.alive).map(s => ({ id: s.id, name: s.name, color: s.color, parent: s.parent, home: s.home, leader: s.leader, pop: s.pop, herds: s.herds, sedentary: s.sedentary, fed: s.fed })),
+          fields: [], events: [], births: 0, deaths: 0, pops: snap.societies.map(s => s.pop) };
+        frames = [f0]; pops[0] = f0.pops; drawMap(f0); drawChart(); setYear(0); showInspector();
+      }
       else if (m.type === 'frames') {
         waiting = false; m.frames.forEach(onFrame); done = m.done;
         if (m.stopped) {
@@ -44,11 +51,12 @@ export function initPlay(ctx) {
     return w;
   }
 
+  let started = false;
+  const ensure = () => { if (!started) start(); };
   function start() {
-    stop(); done = false; base = null; pending = []; recent = []; applied = []; personId = null; socInfo = new Map(); sel = 0;
+    started = true; stop(); waiting = false; done = false; base = null; pending = []; recent = []; applied = []; personId = null; socInfo = new Map(); sel = 0;
     $('#pEvents').innerHTML = ''; $('#pPending').innerHTML = ''; $('#pPerson').hidden = true; $('#pCompare').hidden = true;
     worker().postMessage({ type: 'init', cfg: getCfg() });
-    $('#pPlayBox').hidden = false;
     $('#pStatus').textContent = 'Ready at year 0. Press Play, or step a year at a time. Pause at any moment to look inside and change things.';
   }
 
@@ -69,12 +77,14 @@ export function initPlay(ctx) {
     tick.acc -= n; step(n, true);
   }
   function step(n, quiet) {
+    ensure();
     if (waiting || done || !w) return;
     waiting = true; w.postMessage({ type: 'step', n });
     if (!quiet) w.postMessage({ type: 'snapshot' });
     requestAnimationFrame(render);
   }
   function runUntil() {
+    ensure();
     if (waiting || done || !w) return;
     if (playing) play();
     const until = $('#pUntil').value, who = $('#pWho').value;
@@ -91,6 +101,7 @@ export function initPlay(ctx) {
     $('#pEvents').innerHTML = `<div class="muted pyline">Year ${f.y}: ${f.births} born, ${f.deaths} died</div>` + (evs.map(e => `<div class="ev"><span class="y">${e.y}</span><span>${say(e)}</span></div>`).join('') || '<div class="more">A quiet year.</div>');
   }
   function play() {
+    ensure();
     if (done) return;
     playing = !playing; $('#pPlay').textContent = playing ? '❚❚ Pause' : '▶ Play';
     $('#pStatus').textContent = playing ? 'Running. Pause to look inside and step in.' : 'Paused. Look inside below, change what you like, then play on.';
@@ -113,12 +124,31 @@ export function initPlay(ctx) {
     const G = meta.grid, box = cv.parentElement.clientWidth, px = Math.min(560, box), cell = px / G, dpr = devicePixelRatio || 1;
     cv.width = px * dpr; cv.height = px * dpr; cv.style.width = px + 'px'; cv.style.height = px + 'px';
     const c = cv.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const T = dark() ? TERRAIN.dark : TERRAIN.light;
-    meta.map.forEach((v, i) => { c.fillStyle = T[v] || T[1]; c.fillRect((i % G) * cell, Math.floor(i / G) * cell, cell + 0.5, cell + 0.5); });
+    const dk = dark(), mix = (a, b, t) => a.map((x, k) => Math.round(x + (b[k] - x) * t));
+    const rgb = (a, m = 1) => `rgb(${a.map(x => Math.round(x * m)).join(',')})`, shade = dk ? 0.45 : 1;
+    const SAND = [232, 222, 192], WOOD = [96, 140, 82], SEA = [150, 190, 222], DEEP = [70, 125, 175], RIVER = [120, 170, 220], SOIL = [214, 206, 140];
+    // terrain: sand to forest by how much food the land holds now; sea deeper where the fish are
+    meta.map.forEach((v, i) => {
+      const x = (i % G) * cell, y = Math.floor(i / G) * cell;
+      let col;
+      if (v === 0) col = mix(SEA, DEEP, (meta.fish?.[i] || 0) / 9);
+      else if (v === 3) col = RIVER;
+      else { const r = (meta.rich?.[i] ?? 5) / 9 * ((f?.lush?.[i] ?? 9) / 9); col = v === 2 ? mix(SOIL, WOOD, r * 0.5) : mix(SAND, WOOD, r); }
+      c.fillStyle = rgb(col, shade); c.fillRect(x, y, cell + 0.5, cell + 0.5);
+      if (v !== 0 && v !== 3 && (meta.rich?.[i] ?? 0) * ((f?.lush?.[i] ?? 9) / 9) > 5.5) { // a few trees
+        c.fillStyle = rgb([60, 100, 55], shade); c.beginPath(); c.arc(x + cell * 0.3, y + cell * 0.35, cell * 0.14, 0, 7); c.arc(x + cell * 0.68, y + cell * 0.62, cell * 0.12, 0, 7); c.fill();
+      }
+    });
     if (!f) return;
     const colorOf = id => socInfo.get(id)?.color || '#888';
-    // fields
-    c.globalAlpha = 0.45; f.fields.forEach(([i, s]) => { c.fillStyle = colorOf(s); c.fillRect((i % G) * cell + 1, Math.floor(i / G) * cell + 1, cell - 2, cell - 2); }); c.globalAlpha = 1;
+    // fields: ploughed plots with furrows in the owner's colour
+    (f.fields || []).forEach(([i, s]) => {
+      const x = (i % G) * cell + 1.5, y = Math.floor(i / G) * cell + 1.5, w2 = cell - 3;
+      c.fillStyle = rgb([176, 138, 84], shade); c.fillRect(x, y, w2, w2);
+      c.strokeStyle = colorOf(s); c.lineWidth = Math.max(1, cell / 14); c.globalAlpha = 0.9;
+      for (let k = 1; k < 4; k++) { c.beginPath(); c.moveTo(x + 1, y + w2 * k / 4); c.lineTo(x + w2 - 1, y + w2 * k / 4); c.stroke(); }
+      c.globalAlpha = 1; c.lineWidth = 1.5; c.strokeRect(x, y, w2, w2);
+    });
     const at = h => [(h.x + 0.5) * cell, (h.y + 0.5) * cell];
     const homeOf = new Map(f.socs.map(s => [s.id, s.home]));
     // raids and other links this year
@@ -133,17 +163,29 @@ export function initPlay(ctx) {
     }));
     // camps and villages
     f.socs.forEach(s => {
-      const [x, y] = at(s.home), r = Math.max(4, Math.min(cell * 1.6, 2.2 + Math.sqrt(s.pop) * 1.1));
+      const [x, y] = at(s.home), r = Math.max(7, Math.min(cell * 1.8, 4 + Math.sqrt(s.pop) * 1.3));
       const sick = frames.at(-1).events.some(e => e.t === 'epidemic' && e.soc === s.id);
       if (sick) { c.beginPath(); c.arc(x, y, r + 6, 0, 7); c.strokeStyle = '#7c3aed'; c.lineWidth = 3; c.stroke(); }
-      c.beginPath();
-      if (s.sedentary) c.rect(x - r, y - r, 2 * r, 2 * r); else c.arc(x, y, r, 0, 7);
-      c.fillStyle = colorOf(s.id); c.fill();
-      c.lineWidth = s.id === sel ? 3 : 1.2; c.strokeStyle = s.id === sel ? (dark() ? '#fff' : '#111') : 'rgba(0,0,0,.35)'; c.stroke();
+      const col = colorOf(s.id);
+      // herds graze around the camp
+      const nh = Math.min(28, Math.round(s.herds / 6));
+      for (let k = 0; k < nh; k++) { const ang = k * 2.39996, d = r + 6 + (k % 4) * 3.5; c.fillStyle = k % 3 ? (dk ? '#e7e5e4' : '#fafaf9') : '#78350f'; c.beginPath(); c.ellipse(x + Math.cos(ang) * d, y + Math.sin(ang) * d, 2.4, 1.6, 0, 0, 7); c.fill(); }
+      // the ground the camp or village stands on
+      c.beginPath(); c.arc(x, y, r + 2, 0, 7); c.fillStyle = col; c.globalAlpha = 0.28; c.fill(); c.globalAlpha = 1;
+      c.lineWidth = s.id === sel ? 3 : 1.5; c.strokeStyle = s.id === sel ? (dk ? '#fff' : '#111') : col; c.stroke();
+      // dwellings: one for every five or so people — tents in a camp, houses in a village
+      const nd = Math.max(1, Math.min(24, Math.round(s.pop / 5)));
+      for (let k = 0; k < nd; k++) {
+        const ang = k * 2.39996, d = nd === 1 ? 0 : r * 0.72 * Math.sqrt((k + 0.5) / nd), hx = x + Math.cos(ang) * d, hy = y + Math.sin(ang) * d, sz = Math.max(3, Math.min(6, cell * 0.22));
+        c.fillStyle = col; c.strokeStyle = dk ? 'rgba(0,0,0,.6)' : 'rgba(0,0,0,.45)'; c.lineWidth = 0.8;
+        if (s.sedentary) { c.fillRect(hx - sz * 0.6, hy - sz * 0.2, sz * 1.2, sz * 0.8); c.strokeRect(hx - sz * 0.6, hy - sz * 0.2, sz * 1.2, sz * 0.8); c.beginPath(); c.moveTo(hx - sz * 0.8, hy - sz * 0.2); c.lineTo(hx, hy - sz * 0.9); c.lineTo(hx + sz * 0.8, hy - sz * 0.2); c.closePath(); c.fillStyle = dk ? '#a8a29e' : '#78716c'; c.fill(); c.stroke(); }
+        else { c.beginPath(); c.moveTo(hx - sz * 0.7, hy + sz * 0.5); c.lineTo(hx, hy - sz * 0.7); c.lineTo(hx + sz * 0.7, hy + sz * 0.5); c.closePath(); c.fill(); c.stroke(); }
+      }
       if (s.fed < 0.85) { c.fillStyle = '#d97706'; c.beginPath(); c.arc(x + r * 0.8, y - r * 0.8, 3.5, 0, 7); c.fill(); }
       c.font = '600 11.5px system-ui, sans-serif'; c.textAlign = 'center'; c.lineWidth = 3; c.strokeStyle = dark() ? 'rgba(0,0,0,.75)' : 'rgba(255,255,255,.85)';
-      const label = `${nameOf(s.id)} · ${s.pop}${s.herds ? ' · ' + s.herds + '🐄' : ''}`;
-      c.strokeText(label, x, y - r - 5); c.fillStyle = dark() ? '#f5f5f4' : '#1c1917'; c.fillText(label, x, y - r - 5);
+      const label = `${nameOf(s.id)} · ${s.pop}${s.herds ? ' · ' + s.herds + ' head' : ''}`;
+      const tw = c.measureText(label).width / 2, lx = Math.max(tw + 3, Math.min(px - tw - 3, x)), ly = y - r - 5 < 12 ? y + r + 15 : y - r - 5;
+      c.strokeText(label, lx, ly); c.fillStyle = dark() ? '#f5f5f4' : '#1c1917'; c.fillText(label, lx, ly);
     });
     cv.onclick = ev => {
       const rect = cv.getBoundingClientRect(), mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
@@ -293,5 +335,5 @@ export function initPlay(ctx) {
   $('#pRunUntil').onclick = runUntil;
   $('#pSpeed').innerHTML = SPEEDS.map((s, i) => `<option value="${i}" ${i === 2 ? 'selected' : ''}>${s} yr/s</option>`).join('');
   addEventListener('resize', () => { if (meta) { drawMap(frames.at(-1)); drawChart(); } });
-  return { start };
+  return { start, ensure };
 }

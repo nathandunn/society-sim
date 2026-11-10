@@ -32,7 +32,7 @@ const STOPS = {
 };
 const nm = (f, id) => f.socs.find(s => s.id === id)?.name ?? meta?.societies[id]?.name ?? 'a band';
 let meta = null;
-const lite = f => ({ ...f, fields: null });
+const lite = f => ({ ...f, fields: null, lush: null });
 
 self.onmessage = (ev) => {
   const m = ev.data;

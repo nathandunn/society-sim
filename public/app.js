@@ -457,6 +457,7 @@ document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
   $('#setup .runbar').hidden = b.dataset.tab !== 'run' && b.dataset.tab !== 'play';
   $('#go').hidden = $('#dice').hidden = b.dataset.tab === 'play';
   if (b.dataset.tab === 'sweep') { renderSweepPick(); loadRecent(); }
+  if (b.dataset.tab === 'play' && typeof player !== 'undefined') player.ensure(); // show the founding camps at once
 });
 $('#go').onclick = run;
 $('#dice').onclick = () => { $('#seed').value = 1 + Math.floor(Math.random() * 99999); run(); };
@@ -479,5 +480,5 @@ renderSetup();
 renderSweep();
 run();
 const showTab = t => document.querySelector(`.tab[data-tab="${t}"]`).click();
-initPlay({ esc, describe, getCfg: () => { saveState(); return runCfg(); },
+const player = initPlay({ esc, describe, getCfg: () => { saveState(); return runCfg(); },
   showResult: (r) => { result = r; r.ms = r.ms || 0; pickYear = null; causeFilter = null; showTab('run'); renderResult(); } });
