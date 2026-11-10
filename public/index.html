@@ -16,8 +16,8 @@
     <p class="sub">Two bands, one world, 500 years. Which way of organising people survives in forest, farmland, desert or islands — and why.</p>
   </div>
   <nav class="tabs" role="tablist">
-    <button class="tab on" data-tab="run" role="tab">Single run</button>
-    <button class="tab" data-tab="play" role="tab">Play</button>
+    <button class="tab on" data-tab="play" role="tab">Play</button>
+    <button class="tab" data-tab="run" role="tab">Single run</button>
     <button class="tab" data-tab="sweep" role="tab">Sweep</button>
     <button class="tab" data-tab="about" role="tab">Model</button>
   </nav>
@@ -83,7 +83,7 @@
     <div id="stage" class="stage">
       <canvas id="pMap" aria-label="Map of the world"></canvas>
       <div class="hud hudtop">
-        <button id="pExit" class="hb" title="Back to the setup">⚙ Setup</button>
+        <button id="pExit" class="hb" title="Choose the societies and the world">⚙ Setup</button>
         <b id="pYear" class="pyear">Year 0</b>
         <button id="pPlay" class="hb primary">▶ Play</button>
         <button id="pStep" class="hb" title="One year">+1</button>
@@ -119,11 +119,17 @@
       <aside id="pDrawer" class="drawer" hidden>
         <div class="dhead">
           <div class="dtabs" role="tablist">
-            <button data-pane="soc" class="on">Society</button><button data-pane="people">People</button><button data-pane="log">Chronicle</button><button data-pane="chart">Population</button>
+            <button data-pane="setup">Setup</button><button data-pane="soc" class="on">Society</button><button data-pane="people">People</button><button data-pane="log">Chronicle</button><button data-pane="chart">Population</button>
           </div>
           <button id="pClose2" class="hb" aria-label="Close">✕</button>
         </div>
         <div class="dbody">
+          <div data-pane="setup" hidden>
+            <p class="hint">Choose two societies and a world, then start. Changes here take effect when you start a new history.</p>
+            <div id="pSetupHolder"></div>
+            <p><button id="pStart2" class="primary">▶ Start this history</button></p>
+            <p class="hint">Elsewhere: <a href="#" data-goto="run">full results of one run</a> · <a href="#" data-goto="sweep">sweep many runs</a> · <a href="#" data-goto="about">how the model works</a></p>
+          </div>
           <div data-pane="soc" id="pInspect">
             <div id="pSocTabs" class="chips"></div>
             <div id="pPending"></div>

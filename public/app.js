@@ -450,10 +450,16 @@ function renderSweep() {
 }
 
 // ---------- wiring ----------
+// the setup panel lives in the play drawer while playing, and on the page otherwise
+const setupHome = { parent: $('#setup').parentNode, next: $('#setup').nextSibling };
 document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
   document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === b));
+  if (b.dataset.tab === 'play') $('#pSetupHolder').appendChild($('#setup'));
+  else if ($('#setup').parentNode !== setupHome.parent) setupHome.parent.insertBefore($('#setup'), setupHome.next);
+  if (b.dataset.tab === 'run' && !result) setTimeout(run, 0);
   ['run', 'play', 'sweep', 'about'].forEach(t => $('#tab-' + t).hidden = t !== b.dataset.tab);
   $('#setup').hidden = b.dataset.tab === 'about';
+  $('#setup').classList.toggle('panel', b.dataset.tab !== 'play');
   $('#setup .runbar').hidden = b.dataset.tab !== 'run' && b.dataset.tab !== 'play';
   $('#go').hidden = $('#dice').hidden = b.dataset.tab === 'play';
   if (b.dataset.tab === 'sweep') { renderSweepPick(); loadRecent(); }
@@ -479,7 +485,7 @@ showBlurb();
 renderTune();
 renderSetup();
 renderSweep();
-run();
 const showTab = t => document.querySelector(`.tab[data-tab="${t}"]`).click();
-const player = initPlay({ esc, describe, exit: () => showTab('run'), getCfg: () => { saveState(); return runCfg(); },
+const player = initPlay({ esc, describe, goto: t => showTab(t), getCfg: () => { saveState(); return runCfg(); },
   showResult: (r) => { result = r; r.ms = r.ms || 0; pickYear = null; causeFilter = null; showTab('run'); renderResult(); } });
+showTab('play'); // Play is the front door

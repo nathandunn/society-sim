@@ -3,7 +3,7 @@
 // TFR ~ 5-6, modal adult death ~ 70. Every value is tunable from the UI.
 
 // Model version: bump with package.json (tests check they match). Stamped into every result.
-export const MODEL_VERSION = '0.5.3';
+export const MODEL_VERSION = '0.5.4';
 
 export const DEFAULT_PARAMS = {
   years: 500,

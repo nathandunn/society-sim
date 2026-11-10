@@ -29,7 +29,7 @@ export function initPlay(ctx) {
         // year 0: draw the founding camps straight away
         const f0 = { y: 0, socs: snap.societies.filter(s => s.alive).map(s => ({ id: s.id, name: s.name, color: s.color, parent: s.parent, home: s.home, leader: s.leader, pop: s.pop, herds: s.herds, sedentary: s.sedentary, fed: s.fed })),
           fields: [], events: [], births: 0, deaths: 0, pops: snap.societies.map(s => s.pop) };
-        frames = [f0]; pops[0] = f0.pops; view.fit = false; drawMap(f0); drawChart(); setYear(0); showInspector(); renderHud(f0);
+        frames = [f0]; pops[0] = f0.pops; view.fit = false; founders0 = f0.socs.map(x => x.home); drawMap(f0); drawChart(); setYear(0); showInspector(); renderHud(f0);
       }
       else if (m.type === 'frames') {
         waiting = false; m.frames.forEach(onFrame); done = m.done;
@@ -60,7 +60,7 @@ export function initPlay(ctx) {
   }
 
   function onFrame(f) {
-    f.socs.forEach(s => { const o = socInfo.get(s.id) || {}; socInfo.set(s.id, { ...o, id: s.id, name: s.name, color: s.color, parent: s.parent }); });
+    f.socs.forEach(s => { const o = socInfo.get(s.id) || {}; socInfo.set(s.id, { ...o, id: s.id, name: s.name, color: s.color, parent: s.parent, home: s.home }); });
     pops[f.y] = f.pops;
     frames.push(f); if (frames.length > 3) frames.shift();
     recent.push(...f.events); if (recent.length > 80) recent.splice(0, recent.length - 80);
@@ -125,7 +125,7 @@ export function initPlay(ctx) {
     if (!view.fit) fitView(W, H);
     const cell = view.base * view.z, ox = view.ox, oy = view.oy, px = W, z = view.z;
     const c = cv.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0);
-    c.fillStyle = getComputedStyle(document.body).getPropertyValue('--bg') || '#111'; c.fillRect(0, 0, W, H);
+    c.fillStyle = dark() ? 'rgb(32,50,66)' : 'rgb(170,200,226)'; c.fillRect(0, 0, W, H); // open sea beyond the map
     const dk = dark(), mix = (a, b, t) => a.map((x, k) => Math.round(x + (b[k] - x) * t));
     const rgb = (a, m = 1) => `rgb(${a.map(x => Math.round(x * m)).join(',')})`, shade = dk ? 0.45 : 1;
     const SAND = [232, 222, 192], WOOD = [96, 140, 82], SEA = [150, 190, 222], DEEP = [70, 125, 175], RIVER = [120, 170, 220], SOIL = [214, 206, 140];
@@ -154,17 +154,39 @@ export function initPlay(ctx) {
     });
     const at = h => [ox + (h.x + 0.5) * cell, oy + (h.y + 0.5) * cell];
     hit = { f, at, cell };
-    const homeOf = new Map(f.socs.map(s => [s.id, s.home]));
-    // raids and other links this year
-    const lastFrames = frames.slice(-3);
+    // links between peoples over the last few years, labelled; raids both ways get one double-headed arrow
+    const homeOf = id => f.socs.find(s => s.id === id)?.home || socInfo.get(id)?.home;
+    const links = new Map();
+    const lastFrames = frames.slice(-4);
     lastFrames.forEach((fr, k) => fr.events.forEach(e => {
-      const a = homeOf.get(e.soc), b = homeOf.get(e.to);
-      if (!a || !b) return;
-      const fade = 0.35 + 0.65 * (k + 1) / lastFrames.length;
-      if (e.t === 'raid') arrow(c, at(a), at(b), e.win ? `rgba(220,38,38,${fade})` : `rgba(220,38,38,${fade * 0.6})`, e.win ? [] : [4, 4], 2.2);
-      else if (e.t === 'fission' || e.t === 'migrate') arrow(c, at(a), at(b), `rgba(120,113,108,${fade})`, [2, 3], 1.4);
-      else if (e.t === 'conquest') arrow(c, at(b), at(a), `rgba(127,29,29,${fade})`, [], 3.5);
+      if (!['raid', 'conquest', 'merger', 'fission', 'migrate', 'trade'].includes(e.t) || e.to == null) return;
+      // from → to as the arrow should point
+      const [from, to] = e.t === 'conquest' ? [e.to, e.soc] : [e.soc, e.to];
+      const kind = e.t === 'raid' ? 'raid' : e.t, key = kind + ':' + Math.min(from, to) + ':' + Math.max(from, to);
+      const L = links.get(key) || { kind, a: Math.min(from, to), b: Math.max(from, to), dirs: new Set(), k: 0, won: 0, lost: 0, dead: 0, taken: 0, n: 0 };
+      L.dirs.add(from + '>' + to); L.k = Math.max(L.k, k); L.n += e.n || e.people || e.size || 0;
+      if (e.t === 'raid') { if (e.win) L.won++; else L.lost++; L.dead += (e.dA || 0) + (e.dB || 0); L.taken += e.taken || 0; L.from = from; L.to = to; }
+      else { L.from = from; L.to = to; }
+      links.set(key, L);
     }));
+    for (const L of links.values()) {
+      const pa = homeOf(L.from), pb = homeOf(L.to); if (!pa || !pb) continue;
+      const fade = 0.45 + 0.55 * (L.k + 1) / lastFrames.length, both = L.dirs.size > 1;
+      let col, label, dash = [], wdt = 2.6;
+      if (L.kind === 'raid') {
+        col = `rgba(220,38,38,${fade})`;
+        label = both ? '⚔ raiding each other' : `⚔ raid — ${L.won ? 'won' : 'beaten off'}`;
+        const bits = []; if (L.dead) bits.push(`${L.dead} killed`); if (L.taken) bits.push(`${L.taken} taken`);
+        if (bits.length) label += ', ' + bits.join(', ');
+        if (!L.won && !both) dash = [6, 5];
+      } else if (L.kind === 'conquest') { col = `rgba(127,29,29,${fade})`; label = '☠ conquered'; wdt = 4; }
+      else if (L.kind === 'merger') { col = `rgba(120,113,108,${fade})`; label = 'merged into'; dash = [3, 3]; }
+      else if (L.kind === 'fission') { col = `rgba(120,113,108,${fade})`; label = `split off${L.n ? ' (' + L.n + ')' : ''}`; dash = [3, 3]; wdt = 1.8; }
+      else if (L.kind === 'migrate') { col = `rgba(120,113,108,${fade})`; label = `${L.n} moved`; dash = [3, 3]; wdt = 1.6; }
+      else if (L.kind === 'trade') { col = `rgba(21,128,61,${fade})`; label = 'food sent'; wdt = 2; }
+      arrow(c, at(pa), at(pb), col, dash, wdt, both);
+      tag(c, at(pa), at(pb), label, col, dk);
+    }
     // camps and villages
     f.socs.forEach(s => {
       const [x, y] = at(s.home), r = Math.max(7, Math.min(cell * 1.8, (4 + Math.sqrt(s.pop) * 1.3) * Math.sqrt(z)));
@@ -195,6 +217,7 @@ export function initPlay(ctx) {
 
   // ---------- moving about the map: drag to pan, pinch or wheel to zoom, tap a camp ----------
   const view = { z: 1, ox: 0, oy: 0, base: 10, fit: false };
+  let founders0 = [];
   let hit = null;
   // the part of the screen not covered by the bars and the drawer
   function area(W, H) {
@@ -204,19 +227,23 @@ export function initPlay(ctx) {
   // fill the screen with the map (no empty margins), centred on where people live
   function fitView(W, H) {
     const G = meta.grid, a = area(W, H);
-    view.base = Math.max(a.w, a.h) / G; view.z = 1; view.fit = true;
-    const socs = (frames.at(-1) || {}).socs || [];
-    const cx = socs.length ? socs.reduce((t, s) => t + s.home.x, 0) / socs.length + 0.5 : G / 2, cy = socs.length ? socs.reduce((t, s) => t + s.home.y, 0) / socs.length + 0.5 : G / 2;
+    view.base = Math.min(a.w, a.h) / G; view.z = 1; view.fit = true; // the whole world in view
+    const hs = founders0; // where the founders started: fixed for the whole history, so the view never wanders by itself
+    const cx = hs.length ? hs.reduce((t, h) => t + h.x, 0) / hs.length + 0.5 : G / 2, cy = hs.length ? hs.reduce((t, h) => t + h.y, 0) / hs.length + 0.5 : G / 2;
     centre(cx, cy, W, H);
   }
   function centre(cx, cy, W, H) {
     const G = meta.grid, a = area(W, H), cell = view.base * view.z;
-    view.ox = Math.min(a.x0, Math.max(a.x0 + a.w - G * cell, a.x0 + a.w / 2 - cx * cell));
-    view.oy = Math.min(a.y0, Math.max(a.y0 + a.h - G * cell, a.y0 + a.h / 2 - cy * cell));
+    // centre on (cx, cy) but never leave an empty band when the map is bigger than the screen
+    const fitX = G * cell <= a.w, fitY = G * cell <= a.h;
+    view.ox = fitX ? a.x0 + (a.w - G * cell) / 2 : Math.min(a.x0, Math.max(a.x0 + a.w - G * cell, a.x0 + a.w / 2 - cx * cell));
+    view.oy = fitY ? a.y0 + (a.h - G * cell) / 2 : Math.min(a.y0, Math.max(a.y0 + a.h - G * cell, a.y0 + a.h / 2 - cy * cell));
   }
   function focus(id) {
     const s = (frames.at(-1)?.socs || []).find(x => x.id === id), cv = $('#pMap'); if (!s) return;
-    centre(s.home.x + 0.5, s.home.y + 0.5, cv.clientWidth, cv.clientHeight); redraw();
+    const a = area(cv.clientWidth, cv.clientHeight), cell = view.base * view.z, x = view.ox + (s.home.x + 0.5) * cell, y = view.oy + (s.home.y + 0.5) * cell;
+    if (x < a.x0 + 30 || x > a.x0 + a.w - 30 || y < a.y0 + 30 || y > a.y0 + a.h - 30) centre(s.home.x + 0.5, s.home.y + 0.5, cv.clientWidth, cv.clientHeight);
+    redraw();
   }
   function zoomAt(k, mx, my) {
     const nz = Math.max(0.6, Math.min(8, view.z * k)); k = nz / view.z;
@@ -264,12 +291,23 @@ export function initPlay(ctx) {
     $('#pChips').innerHTML = f.socs.map(s => `<button class="chipbtn ${s.id === sel ? 'on' : ''}" data-id="${s.id}" style="--c:${socInfo.get(s.id)?.color}"><i></i>${esc(nameOf(s.id))} <b>${s.pop}</b>${s.fed < 0.85 ? ' <span class="bad">hungry</span>' : ''}</button>`).join('');
     $('#pChips').querySelectorAll('button').forEach(b => b.onclick = () => { sel = +b.dataset.id; if (snap) showInspector(); openDrawer('soc'); focus(sel); });
   }
-  function arrow(c, [x1, y1], [x2, y2], color, dash, wdt) {
-    const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1, ux = dx / L, uy = dy / L;
-    const sx = x1 + ux * 10, sy = y1 + uy * 10, ex = x2 - ux * 12, ey = y2 - uy * 12;
-    c.save(); c.strokeStyle = color; c.fillStyle = color; c.lineWidth = wdt; c.setLineDash(dash);
-    c.beginPath(); c.moveTo(sx, sy); c.lineTo(ex, ey); c.stroke(); c.setLineDash([]);
-    c.beginPath(); c.moveTo(ex, ey); c.lineTo(ex - ux * 8 - uy * 5, ey - uy * 8 + ux * 5); c.lineTo(ex - ux * 8 + uy * 5, ey - uy * 8 - ux * 5); c.closePath(); c.fill(); c.restore();
+  function arrow(c, [x1, y1], [x2, y2], color, dash, wdt, both) {
+    const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1, ux = dx / L, uy = dy / L, gap = Math.min(22, L / 4);
+    const sx = x1 + ux * gap, sy = y1 + uy * gap, ex = x2 - ux * gap, ey = y2 - uy * gap, hl = 7 + wdt * 2, hw = 4 + wdt * 1.4;
+    const head = (px, py, vx, vy) => { c.beginPath(); c.moveTo(px, py); c.lineTo(px - vx * hl - vy * hw, py - vy * hl + vx * hw); c.lineTo(px - vx * hl + vy * hw, py - vy * hl - vx * hw); c.closePath(); c.fill(); };
+    c.save(); c.strokeStyle = color; c.fillStyle = color; c.lineWidth = wdt; c.setLineDash(dash); c.lineCap = 'round';
+    c.beginPath(); c.moveTo(sx + (both ? ux * hl : 0), sy + (both ? uy * hl : 0)); c.lineTo(ex - ux * hl * 0.8, ey - uy * hl * 0.8); c.stroke(); c.setLineDash([]);
+    head(ex, ey, ux, uy); if (both) head(sx, sy, -ux, -uy);
+    c.restore();
+  }
+  // a small label in a pill at the middle of a link
+  function tag(c, [x1, y1], [x2, y2], text, color, dk) {
+    const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+    c.save(); c.font = '600 11.5px system-ui, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    const w = c.measureText(text).width + 12, h = 18;
+    c.fillStyle = dk ? 'rgba(28,25,23,.9)' : 'rgba(255,255,255,.93)'; c.strokeStyle = color; c.lineWidth = 1.2;
+    c.beginPath(); if (c.roundRect) c.roundRect(mx - w / 2, my - h / 2, w, h, 9); else c.rect(mx - w / 2, my - h / 2, w, h); c.fill(); c.stroke();
+    c.fillStyle = dk ? '#fafaf9' : '#1c1917'; c.fillText(text, mx, my + 0.5); c.restore();
   }
 
   // ---------- population chart, with the untouched history dashed ----------
@@ -409,9 +447,12 @@ export function initPlay(ctx) {
   $('#pClose2').onclick = closeDrawer;
   $('#pTicker').onclick = () => openDrawer('log');
   document.querySelectorAll('#pDrawer .dtabs button').forEach(b => b.onclick = () => openDrawer(b.dataset.pane));
-  $('#pExit').onclick = () => { if (playing) play(); ctx.exit(); };
+  $('#pExit').onclick = () => openDrawer('setup');
+  $('#pStart2').onclick = () => { start(); closeDrawer(); };
+  document.querySelectorAll('[data-goto]').forEach(a => a.onclick = ev => { ev.preventDefault(); if (playing) play(); ctx.goto(a.dataset.goto); });
   bindMap();
   $('#pSpeed').innerHTML = SPEEDS.map((s, i) => `<option value="${i}" ${i === 2 ? 'selected' : ''}>${s} yr/s</option>`).join('');
-  addEventListener('resize', () => { if (meta) { view.fit = false; redraw(); } });
-  return { start, ensure, show: () => { if (meta) { view.fit = false; requestAnimationFrame(redraw); } } };
+  let lastW = innerWidth;
+  addEventListener('resize', () => { if (!meta) return; if (Math.abs(innerWidth - lastW) > 40) { lastW = innerWidth; view.fit = false; } redraw(); });
+  return { start, ensure, show: () => { if (meta) requestAnimationFrame(redraw); } };
 }
